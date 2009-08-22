@@ -6,13 +6,10 @@
 
 #define _NAME "notarget"
 #define _DESCR "A demo of insertion attack against IPS based on TTL crafting"
-#define _VERSION "1989.6.4"
-#define _CODENAME "falun"
+#define _VERSION "0.0.2"
 /*
-
- * Falun Conjecture:
-   every string that causes GFW attacks is longer than "falun".
-
+ * Falun Conjecture: every case-insensitive string that causes 
+   GFW attacks is longer than "falun".
 Try to prove or falsify. */
 #define _DATE "Aug 17 2009"
 #define _COPYING "Copyright (c) 2009, KLZ-grad. License: BSD."
@@ -443,8 +440,8 @@ void init(int argc, char** argv){
 	g_option_context_free(context);
 
 	if(cfg_version){
-		fprintf(stderr, "%s - %s\nVersion %s (codename %s), %s\n%s\n",
-						_NAME, _DESCR, _VERSION, _CODENAME, _DATE, _COPYING);
+		fprintf(stderr, "%s - %s\nVersion %s, %s\n%s\n",
+						_NAME, _DESCR, _VERSION, _DATE, _COPYING);
 		exit(0);
 	}
 	
