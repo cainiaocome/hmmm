@@ -445,7 +445,8 @@ void init(int argc, char** argv){
 		exit(0);
 	}
 	
-	_sport_multiplier = 65536/cfg_verify;
+	if(cfg_verify)//div by 0 bug
+		_sport_multiplier = 65536/cfg_verify;
 
 	if(cfg_firsthop > cfg_maxhop){
 		fprintf(stderr, "firsthop must be less than maxhop\n");
