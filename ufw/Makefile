@@ -5,7 +5,7 @@ LIBS =	`pkg-config --libs glib-2.0` \
 		-lrt
 INCLUDES =	`pkg-config --cflags glib-2.0` \
 			`pkg-config --cflags gthread-2.0`
-CFLAGS = -Wall -O $(INCLUDES) -W -Wextra -DCHINANET
+CFLAGS = -Wall -O $(INCLUDES) -W -Wextra -DCHINANET -g
 scan: scan.c
 	$(CC) $(CFLAGS) $(LIBS) -o $@ $<
 

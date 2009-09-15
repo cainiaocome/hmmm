@@ -12,7 +12,7 @@
 #define _COPYING "Copyright (c) 2009, KLZ-grad. License: BSD."
 
 guint mtu = 1492;
-guint ttl = 0; //don't make ttl large enough to reach its destination
+guint ttl = 255; //don't make ttl large enough to reach its destination
 char* dst_range = NULL;
 char* _myip = NULL;
 gboolean version;
@@ -36,28 +36,44 @@ gulong myip;
 gushort dport;
 gboolean _continue;
 gboolean recv_continue;
+int gst;
+typedef struct {
+		//guint send1:1;
+		//guint send2:1;
+		//guint send3:1;
+		guint seq_t:1;
+		guint ack_t:1;
+		guint syn:1;
+		guint fin:1;
+		guint rst:1;
+		guint psh:1;
+		guint ack:1;
+		guint payload:1;
+} state_t;
 
 struct {
 	gushort sport;
 	gulong seq;
 	gulong daddr;
 	GTimeVal time;
+	state_t st;
 } scan[65536];
 
-#define RAND() ((unsigned long)mrand48())
-#define offset(cidr) (0xffffffffL >> (cidr))
+#define RAND() ((gulong)mrand48())
+#define offset(cidr) (0xffffffffLL >> (cidr))
 #define netname offset
-#define netmask(cidr) (0xffffffffL << (32-(cidr)))
+#define netmask(cidr) (0xffffffffLL << (32-(cidr)))
 #define hostrand(host, cidr) \
 	(((host) & netmask(cidr)) | (RAND() & netname(cidr)))
 #define hostnext(host, cidr) \
-	(((host) & netmask(cidr)) | ((host)+1 & netname(cidr)))
+	(((host) & netmask(cidr)) | (((host)+1) & netname(cidr)))
 
 char errbuf[LIBNET_ERRBUF_SIZE];
 libnet_t* l;
 libnet_ptag_t tcp;
 libnet_ptag_t ip;
 
+#if 0
 void print_packet(const struct libnet_ipv4_hdr* iph,
 								 const struct libnet_tcp_hdr* tcph,
 								 const GTimeVal* now){
@@ -109,6 +125,7 @@ but they may be not true in other networks.
 		printf(" ; assertion failed: `tcph->th_doff != 5`");
 	putchar('\n');
 }
+#endif
 
 gpointer recv_thread(gpointer _){
 	//g_debug("recv: start");
@@ -140,12 +157,17 @@ gpointer recv_thread(gpointer _){
 		if(myip != iph->ip_dst.s_addr
 		|| scan[sp].daddr != iph->ip_src.s_addr
 		|| scan[sp].sport != ntohs(tcph->th_dport)
-		|| (ntohl(tcph->th_seq) - scan[sp].seq)%1460 != 0
 		|| !(tcph->th_flags & TH_RST)){
 			continue;
 		}
-
-		print_packet(iph, tcph, &now);
+		if(ntohs(iph->ip_id) == 64 && ntohs(tcph->th_win)%17 == 0)
+			printf("%d %d%d%d%d%d%d%d%d type1\n",
+				*(guchar*)&scan[sp].st, scan[sp].st.seq_t, scan[sp].st.ack_t, scan[sp].st.syn,
+				scan[sp].st.fin, scan[sp].st.rst, scan[sp].st.psh, scan[sp].st.ack,scan[sp].st.payload);
+		else if((gushort)(-1 - ntohs(tcph->th_win)*13) == ntohs(iph->ip_id))
+			printf("%d %d%d%d%d%d%d%d%d type2\n",
+				*(guchar*)&scan[sp].st, scan[sp].st.seq_t, scan[sp].st.ack_t, scan[sp].st.syn,
+				scan[sp].st.fin, scan[sp].st.rst, scan[sp].st.psh, scan[sp].st.ack,scan[sp].st.payload);
 	}
 
 	close(s);
@@ -154,46 +176,83 @@ gpointer recv_thread(gpointer _){
 	return _;
 }
 
+
 void falun(){
-	char plbuf[]="GET /falun HTTP/1.1\r\nHost: \r\n";
-	int pl_s = strlen(plbuf);
-	gulong sa = myip;
-	gulong da = htonl(hostrand(dsthost, dstnet));
-	gushort sp = RAND()%65535+1;
+	char falunget[]="GET /falun HTTP/1.1\r\nHost: \r\n";
+//	char plbuf[]="GET /falun HTTP/1.1\r\n\r\n";
+	int pl_s;
+	state_t st = *(state_t*)&gst;
+	dport = htons(gst+1);
+	gulong sa = myip;;
+	gulong da = htonl(dsthost);
+	gushort sp = 65432;
 	gushort dp = dport;
 	gushort win = RAND()%65536;
 	gulong seq = RAND();
 	gulong ack = RAND();
+	dport=dp;
 	scan[dport].sport = sp;
 	scan[dport].daddr = da;
 	scan[dport].seq = ack;
+	scan[dport].st = st;
+#define SEND(seq, ack, flags)\
+{\
+	tcp = libnet_build_tcp(sp, dp, (seq), (ack), (flags), win, 0, 0, \
+												LIBNET_TCP_H, NULL, 0, l, tcp);\
+	ip = libnet_build_ipv4(LIBNET_IPV4_H + LIBNET_TCP_H, 0, 0, \
+												IP_DF, ttl, IPPROTO_TCP, 0, sa, da, NULL, 0, l, ip);\
+	if(-1 == libnet_write(l)){\
+		g_warning("libnet_write: %s\n", libnet_geterror(l));\
+		return;\
+	}\
+}
+#define SEND_S(seq, ack, flags, payload)\
+{\
+	pl_s = strlen(payload);\
+	tcp = libnet_build_tcp(sp, dp, (seq), (ack), (flags), win, 0, 0, \
+												LIBNET_TCP_H + pl_s, payload[0]?payload:NULL, pl_s, l, tcp);\
+	ip = libnet_build_ipv4(LIBNET_IPV4_H + LIBNET_TCP_H + pl_s, 0, 0,\
+												IP_DF, ttl, IPPROTO_TCP, 0, sa, da, NULL, 0, l, ip);\
+	if(-1 == libnet_write(l)){\
+		g_warning("libnet_write: %s\n", libnet_geterror(l));\
+		return;\
+	}\
+}
+#define RESET()\
+flags=0;\
+if(st.syn)flags|=TH_SYN;\
+if(st.fin)flags|=TH_FIN;\
+if(st.rst)flags|=TH_RST;\
+if(st.psh)flags|=TH_PUSH;\
+if(st.ack)flags|=TH_ACK;
 
 	//syn
-	tcp = libnet_build_tcp(sp, dp, seq++, 0, TH_SYN, win, 0, 0, 
-												LIBNET_TCP_H, NULL, 0, l, tcp);
-	ip = libnet_build_ipv4(LIBNET_IPV4_H + LIBNET_TCP_H, 0, 0, 
-												IP_DF, ttl, IPPROTO_TCP, 0, sa, da, NULL, 0, l, ip);
-	if(-1 == libnet_write(l)){
-		g_warning("libnet_write: %s\n", libnet_geterror(l));
-		return;
-	}
+guchar flags;
+	SEND(seq++, 0, TH_SYN)
+RESET()
+//if(st.send1)
+	SEND_S(st.seq_t ? seq : 1, st.ack_t ? ack : 1, flags, st.payload?"\r\n\r\n":"")
 
-	//ack WITHOUT SYN/ACK!
-	tcp = libnet_build_tcp(sp, dp, seq, ack, TH_ACK, win, 0, 0, 
-												LIBNET_TCP_H, NULL, 0, l, tcp);
-	ip = libnet_build_ipv4(LIBNET_IPV4_H + LIBNET_TCP_H, 0, 0, 
-												IP_DF, ttl, IPPROTO_TCP, 0, sa, da, NULL, 0, l, ip);
-	if(-1 == libnet_write(l)){
-		g_warning("libnet_write: %s\n", libnet_geterror(l));
-		return;
-	}
+	//if_send_1: 0 | 1 ;1
+	//if_send_2: 0 | 1 ;1
+	//if_send_3: 0 | 1 ;1
+	//SEQ:0 | 1 | seq | *;2
+	//ACK:0 | 1 ;1
+	//FLAGS: f(syn, fin, rst, push, ack) ;5
+	//PAYLOAD: "\r\n\r\n" | "" ;1
+
+	//1+1+1+2+1+5+1
+
+	/* SEND_S(?, ?, ?, ?) */
+	/* SEND_S(?, ?, ?, ?) */
+	/* SEND_S(?, ?, ?, ?) */
+	SEND(seq, ack, TH_ACK)
+	SEND_S(seq, ack, TH_PUSH|TH_ACK, falunget)
 
 	//psh/ack
-	tcp = libnet_build_tcp(sp, dp, seq, ack, TH_PUSH|TH_ACK, win, 0, 0, 
-												LIBNET_TCP_H + pl_s, plbuf, pl_s, l, tcp);
-	ip = libnet_build_ipv4(LIBNET_IPV4_H + LIBNET_TCP_H + pl_s, 0, 0, 
-												IP_DF, ttl, IPPROTO_TCP, 0, sa, da, NULL, 0, l, ip);
+	//seq=0;
 
+#if 0
 	struct timespec sd;
 	clock_gettime(CLOCK_REALTIME, &sd);
 	if(sd.tv_nsec < 500000000){
@@ -203,10 +262,7 @@ void falun(){
 		sd.tv_sec++;
 	}
 	clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &sd, NULL);
-	if(-1 == libnet_write(l)){
-		g_warning("libnet_write: %s\n", libnet_geterror(l));
-		return;
-	}
+#endif
 	g_get_current_time(&scan[sp].time);
 }
 
@@ -271,10 +327,11 @@ int main(int argc, char** argv){
 		g_error("g_thread_create: %s", gerr->message);
 
 	/* main loop */
-	for(_continue = TRUE; _continue; ){
-		dport = dport%65535+1;
-		falun();
-	}
+		for(gst=0;gst<256;gst++){
+			usleep(10000);
+			falun();
+			dsthost=hostnext(dsthost, dstnet);
+		}
 
 	/* cleanup */
 	recv_continue = FALSE;
