@@ -1,15 +1,16 @@
 CC = gcc
-LIBS =	`pkg-config --libs glib-2.0` \
-		`pkg-config --libs gthread-2.0` \
-		`libnet-config --libs`\
-		-lrt
-INCLUDES =	`pkg-config --cflags glib-2.0` \
-			`pkg-config --cflags gthread-2.0`
-CFLAGS = -Wall -O $(INCLUDES) -W -Wextra -DCHINANET -g
-scan: scan.c
-	$(CC) $(CFLAGS) $(LIBS) -o $@ $<
+LIBS = -lm 
+INCLUDES = 
+CFLAGS = -Wall -W -Wextra -g
+
+OBJS = packet.o net.o parse.o tcpdump.o cksum.o
+ufw: ufw.o $(OBJS)
+	$(CC) $(CFLAGS) $(LIBS) -o $@ $< $(OBJS)
+
+.c.o:
+	$(CC) $(CFLAGS) $(INCLUDES) -c $<
 
 .PHONY: clean
 
 clean: 
-	rm -f *.o scan
+	rm -f *.o ufw
