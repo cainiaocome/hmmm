@@ -14,3 +14,6 @@ ufw: ufw.o $(OBJS)
 
 clean: 
 	rm -f *.o ufw
+
+cap:
+	setcap cap_net_admin,cap_net_raw+ei ufw

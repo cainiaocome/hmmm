@@ -20,6 +20,7 @@ extern packet* packets_head;
 extern int send_delay;
 extern char* dumpfile;
 extern int verbose;
+extern struct in_addr dst_addr;
 
 int print_ascii = 0;//-A
 int payload_display = 0;//-P
@@ -31,7 +32,7 @@ int print_hex = 0;//-x
 static void printhex(char* s, size_t n){
 	size_t i;
 	for(i = 0; i < n; i++)
-		PRINT("%02x", s[i]);
+		PRINT("%02hhx", s[i]);
 }
 /*
 
@@ -126,7 +127,7 @@ static void appdata_print(char* p, size_t n){
 		else if(print_ascii)
 			PUT('.');
 		else if(print_hex)
-			PRINT("\\x%02x", p[i]);
+			PRINT("\\x%02hhx", p[i]);
 		else
 			PUT(p[i]);
 	}
@@ -137,11 +138,17 @@ static void tcp_packet_print(packet* p){
 	if(p->proto != IPPROTO_TCP)
 		return;
 	struct tcphdr* t = p->tcp;
+	tcp_seq _isn = isn, _ian = ian;
+	if(p->hdr->ip_src.s_addr == dst_addr.s_addr){//inbound
+		_isn = ian;
+		_ian = isn;
+	}
 	PRINT("%5u>%-5u %d:", ntohs(t->th_sport), ntohs(t->th_dport), 
-					ntohl(t->th_seq) - isn);
-	PRINT(t->th_ack?"%d ":"* ", ntohl(t->th_ack) - ian);
+					ntohl(t->th_seq) - _isn);
+	PRINT(t->th_ack?"%d ":"* ", ntohl(t->th_ack) - _ian);
 	PRINT("%u ", ntohs(t->th_win));
 	if(t->th_x2)PRINT("x2:%1x ", t->th_x2);
+	PUT('[');
 	if(t->th_flags & TH_FIN)PUT('F');
 	if(t->th_flags & TH_SYN)PUT('S');
 	if(t->th_flags & TH_RST)PUT('R');
@@ -150,53 +157,53 @@ static void tcp_packet_print(packet* p){
 	if(t->th_flags & TH_URG)PUT('U');
 	if(t->th_flags & TH_ECE)PUT('E');
 	if(t->th_flags & TH_CWR)PUT('C');
-	PUT(' ');
+	PUT(']');
 
+	if(p->tcpopts_s > 0)
+		PUT(' ');
 	size_t i;
 	for(i = 0; i < p->tcpopts_s;){
 			char buf[50];
 			buf[0] = 0;
 			char kind = p->tcpopts[i];
 			switch(kind){
-				case 0:
+				case TCPOPT_EOL:
 					PUT('.');
 					break;
-				case 1:
+				case TCPOPT_NOP:
 					PUT('_');
 					break;
-				case 2:
+				case TCPOPT_MAXSEG:
 					PRINT("MSS=%04x;", ntohs(*(u_short*)&p->tcpopts[i+2]));
 					break;
-				case 3:
+				case TCPOPT_WINDOW:
 					PRINT("WS=%02x;", p->tcpopts[i+2]);
 					break;
-				case 4:
+				case TCPOPT_SACK_PERMITTED:
 					PRINT("SAP;");
 					break;
-				case 5:
+				case TCPOPT_SACK:
 					PRINT("SACK");
 					printhex(&p->tcpopts[i+2], p->tcpopts[i+1]-2);
 					PUT(';');
 					break;
-				case 8:
-					PRINT("TS=%08x,%08x;", ntohl(*(u_int*)&p->tcpopts[i+2]), 
-							ntohl(*(u_int*)&p->ipopts[i+6]));
+				case TCPOPT_TIMESTAMP:
+					PRINT("TS=%08x:%08x;", ntohl(*(u_int*)&p->tcpopts[i+2]), 
+							ntohl(*(u_int*)&p->tcpopts[i+6]));
 					break;
 				default:
 					PRINT("%02x=", kind);
-					printhex(&p->ipopts[i+2], p->tcpopts[i+1]-2);
+					printhex(&p->tcpopts[i+2], p->tcpopts[i+1]-2);
 					PUT(';');
 			}
 			i += kind > 1 ? (u_int)p->tcpopts[i+1] : 1;
 	}
-	if(i > 0)
-		PUT(' ');
 	if(p->appdata_s == UFW_SMALL_SIZE){
 		PRINT("[INVALID PAYLOAD LENGTH]\n");
 		return;
 	}
 	if(p->appdata_s)
-		PRINT("(%u)", p->appdata_s);
+		PRINT(" (%u)", p->appdata_s);
 	PUT('\n');
 
 	appdata_print(p->appdata, p->appdata_s);
@@ -256,15 +263,15 @@ void packet_print(packet* p){
 		PUT(' ');
 	}
 
-	PRINT("%6d ", ntohs(h->ip_id));
+	PRINT("%5u ", ntohs(h->ip_id));
 	u_int t = ntohs(h->ip_off);
 	PRINT("%c%c%c ", IP_RF&t?'R':'_', IP_DF & t?'D':'_', IP_MF & t?'M':'_');
 	if(IP_OFFMASK & t)PRINT("off:%04x ", IP_OFFMASK & t);
-	PRINT("%3d ", h->ip_ttl);
+	PRINT("%3u ", h->ip_ttl);
 	PRINT("%15s>", inet_ntoa(h->ip_src));
-	PRINT("%-15s ", inet_ntoa(h->ip_dst));
+	PRINT("%-15s", inet_ntoa(h->ip_dst));
 	if(p->ipopts_s){
-		PRINT("[%d] ", p->ipopts_s);
+		PRINT(" [%d]", p->ipopts_s);
 		printhex(p->ipopts, p->ipopts_s);
 	}
 	PUT('|');

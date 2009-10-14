@@ -22,9 +22,10 @@
 extern packet* packets_tail;
 extern packet* packets_head;
 extern int send_delay;
+extern int listen_only;
 
 long long bandwidth = 0;//-b
-double net_timeout = 5.;
+double net_timeout = -1;
 int mtu;
 int ttl = 255;//-T
 int udp_mode = 0;//-u
@@ -39,6 +40,8 @@ tcp_seq seq, ack, isn, ian;
 u_short ip_id;
 
 static int ian_seen = 0;
+static int isn_seen = 0;
+static int proto;
 
 static int sock = 0;
 
@@ -65,8 +68,10 @@ void net_init(){
 		return;
 	}
 
+	proto = udp_mode ? IPPROTO_UDP : IPPROTO_TCP;
+
 	/*XXX CAP_NET_RAW  */
-	TRY( sock = socket(PF_INET, SOCK_RAW, IPPROTO_RAW) );
+	TRY( sock = socket(PF_INET, SOCK_RAW, proto) );
 	DEBUG("sock set up.");
 
 	socklen_t optlen;
@@ -85,14 +90,17 @@ void net_init(){
 	int on = 1;
 	TRY( setsockopt(sock, SOL_SOCKET, SO_TIMESTAMP, &on, sizeof(on)) );
 
-	/* set recv timeout */
+	/* set recv timeout: 1 usec */
 	struct timeval rto = {0, 1};
 	TRY( setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &rto, sizeof(rto)) );
+
+	/* customize ip hdr */
+	TRY( setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) );
 
 	/* given local_addr, try to bind */
 	struct sockaddr_in local;
 	local.sin_family = AF_INET;
-	local.sin_port = IPPROTO_RAW;
+	local.sin_port = htons(proto);
 	local.sin_addr = local_addr;
 	if(!local_addr.s_addr 
 		&& bind(sock, (struct sockaddr*)&local, sizeof(local)) < 0){
@@ -108,7 +116,7 @@ void net_init(){
 	/* autobind */
 	struct sockaddr_in dst;
 	dst.sin_family = AF_INET;
-	dst.sin_port = IPPROTO_RAW;
+	dst.sin_port = IPPROTO_TCP;
 	dst.sin_addr = dst_addr;
 	TRY( connect(sock, (struct sockaddr*)&dst, sizeof(dst)) );
 	DEBUG("sock connected.");
@@ -126,8 +134,8 @@ void net_init(){
 
 	isn = rand();
 	seq = isn;
-	ian = rand();
-	ack = ian + 1;
+	ian = 0;
+	ack = 0;
 	ip_id = rand()%65535 + 1;
 }
 
@@ -145,7 +153,7 @@ void net_read(){
 	struct msghdr msg = {NULL, 0, &iov, 1, ctlbuf, sizeof(ctlbuf), 0};
 	ssize_t recv_s;
 
-	if((recv_s = recvmsg(sock, &msg, MSG_DONTWAIT)) < 0){
+	if((recv_s = recvmsg(sock, &msg, 0)) < 0){
 		if(errno == EAGAIN){
 			struct timeval now;
 			gettimeofday(&now, NULL);
@@ -174,11 +182,10 @@ void net_read(){
 	u_short* sport = (u_short*)(buf + iph->ip_hl*4);
 	u_short* dport = (u_short*)(buf + iph->ip_hl*4 + 2);
 	if(recv_s < IPV4_H+2 || iph->ip_v != IPVERSION
-	|| (iph->ip_p != IPPROTO_TCP && iph->ip_p != IPPROTO_UDP)
-	|| recv_s - iph->ip_hl*4 < 2
+	|| iph->ip_p != proto || recv_s - iph->ip_hl*4 < 2
 	|| iph->ip_dst.s_addr != local_addr.s_addr
 	|| iph->ip_src.s_addr != dst_addr.s_addr
-	|| *sport != dst_port || *dport != local_port)
+	|| ntohs(*sport) != dst_port || ntohs(*dport) != local_port)
 		return;
 
 	DEBUG("new datagram.");
@@ -189,12 +196,24 @@ void net_read(){
 	packets_tail = packet_new(buf, recv_s, recv_time, packets_tail);
 	if(packets_head == NULL)
 		packets_head = packets_tail;
-	if(iph->ip_p == IPPROTO_TCP){
-		if(!ian_seen && ntohl(packets_tail->tcp->th_ack)){
-			ian = ntohl(packets_tail->tcp->th_seq);
-			ack = ian + 1;
+	packet* p = packets_tail;
+	if(proto == IPPROTO_TCP && p->tcp != NULL){
+		if(listen_only){
+			if(!isn_seen){
+				isn = ntohl(p->tcp->th_seq);
+				isn_seen = 1;
+			}
+			if(!ian_seen && ntohl(p->tcp->th_ack)){
+				ian = ntohl(p->tcp->th_ack) - 1;
+				ian_seen = 1;
+			}
+		}else if(!ian_seen){
+			ian = ntohl(p->tcp->th_seq);
+			ian_seen = 1;
 		}
-		ack = ntohl(packets_tail->tcp->th_seq);
+		ack = ntohl(p->tcp->th_seq);
+		if(p->appdata)
+			ack += p->appdata_s;
 	}
 	packet_print(packets_tail);
 }
@@ -223,7 +242,6 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 	iph->ip_ttl = _ttl;
 	iph->ip_p = udp_mode ? IPPROTO_UDP : IPPROTO_TCP;
 	iph->ip_src = local_addr;
-	DEBUG("local_addr: %s", inet_ntoa(local_addr));
 	iph->ip_dst = dst_addr;
 	sentbyte += IPV4_H;
 	ip_id = ip_id+1 ?: 1;
@@ -242,8 +260,6 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 			memcpy(buf + IPV4_H + TCP_H, p, ps);
 		do_checksum(buf, IPPROTO_TCP, TCP_H + ps);
 
-		if(f == TH_SYN)
-			seq++;
 		/*XXX syn with payload causes target-based difference */
 		seq += ps;
 		sentbyte += TCP_H + ps;

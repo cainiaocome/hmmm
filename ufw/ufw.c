@@ -154,10 +154,6 @@ void get_options(int argc, char** argv){
 			case 'D':
 				debug++;
 				break;
-			case '?':
-			case 'h':
-				printf("%s - %s\n%s\n", _NAME, _DESCR, USAGE);
-				exit(EXIT_SUCCESS);
 			case 'i':
 				line_interval = strtod(optarg, NULL);
 				break;
@@ -191,12 +187,17 @@ void get_options(int argc, char** argv){
 				exit(EXIT_SUCCESS);
 			case 'w':
 				net_timeout = atof(optarg);
+				if(net_timeout < 0)
+					net_timeout = 0;
 				break;
 			case 'x':
 				print_hex = 1;
 				break;
+			case '?':
+			case 'h':
 			default:
-				FATAL("invalid options.");
+				printf("%s - %s\n%s\n", _NAME, _DESCR, USAGE);
+				exit(EXIT_SUCCESS);
 		} /* while */
 
 	if(optind >= argc)
@@ -260,6 +261,8 @@ int main(int argc, char** argv){
 	signal(SIGINT, sighandler);
 
 	if(!listen_only){
+		if(net_timeout < 0)
+			net_timeout = 5.;
 #define LINEBS 65535
 		char linebuf[LINEBS];
 
@@ -278,7 +281,6 @@ int main(int argc, char** argv){
 				ERROR("fread");
 		}
 	}else{
-		net_timeout = 0;
 		for(;;)
 			net_read();
 	}

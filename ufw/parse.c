@@ -1,14 +1,3 @@
-/*
-line    := [[CTL]* ;] [[IP];] <TCP|UDP>
-CTL     := x<repeat> | *<sleep> | .<usleep>
-IP      := [TTL]
-TTL     := <integer>
-TCP     := <flags>[,[<seq>] [,[<ack>] [,[<payload>]]]]
-flags   := SAFRPUCE (case-insensitive)
-seq ack := [+|-|~]<integer> # +/-/~: offset to the original seq/ack/isn of the packet;
-UDP     := <payload>
-payload := \f<filename> | \e<sh> | ...\\ \n \r
-*/
 #ifndef _BSD_SOURCE
 #define _BSD_SOURCE
 #endif
@@ -44,10 +33,11 @@ static int isdelim(char* delim, char c){
 #define max(a, b) ((a) > (b) ? (a) : (b))
 
 #define tok_repeat 'x'
-#define tok_sleep '*'
-#define tok_usleep '.'
+#define tok_sleep '.'
+#define tok_usleep ','
 #define tok_hdrdelim ';'
 #define tok_tcpdelim ','
+#define tok_tcpdelim2 '.'
 #define tok_tcpplus '+'
 #define tok_tcpminus '-'
 #define tok_tcpabs '~'
@@ -61,6 +51,7 @@ static int isdelim(char* delim, char c){
 #define delim_space " \f\n\r\t\v"
 #define delim_hdr ";"
 #define delim_tcp ","
+#define delim2_tcp "."
 
 #define skipspace() while(isspace(line[pos])&&pos<n)pos++
 #define nextdelim(delim) while(!isdelim(delim, line[pos]) && pos < n)pos++
@@ -237,6 +228,10 @@ void interpret(char* line, size_t n){
 				pos++;
 				tcp_state = SEQ;
 				PARSE("delim. tcp-state: SEQ");
+			}else if(tok == tok_tcpdelim2){
+				pos++;
+				tcp_state = PAYLOAD;
+				PARSE("jump. tcp-state: PAYLOAD");
 			}else {
 				PARSE("illegal token");
 				pos++;
@@ -253,27 +248,31 @@ void interpret(char* line, size_t n){
 				skipspace();
 				_seq += atoi(line + pos);
 				PARSE("_seq = SEQ + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(tok == tok_tcpminus){
 				pos++;
 				skipspace();
 				_seq -= atoi(line + pos);
 				PARSE("_seq = SEQ - %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(tok == tok_tcpabs){
 				pos++;
 				skipspace();
 				_seq = isn + atoi(line + pos);
 				PARSE("_seq = ISN + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(isdigit(tok)){
 				_seq = atoi(line + pos);
 				PARSE("_seq = %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(tok == tok_tcpdelim){
 				PARSE("delim. tcp-state: ACK");
 				pos++;
 				tcp_state = ACK;
+			}else if(tok == tok_tcpdelim2){
+				pos++;
+				tcp_state = PAYLOAD;
+				PARSE("jump. tcp-state: PAYLOAD");
 			}else{
 				PARSE("illegal token: %c(%#02x)", tok, tok);
 				pos++;
@@ -290,23 +289,23 @@ void interpret(char* line, size_t n){
 				skipspace();
 				_ack += atoi(line + pos);
 				PARSE("_ack = ACK + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(tok == tok_tcpminus){
 				pos++;
 				skipspace();
 				_ack -= atoi(line + pos);
 				PARSE("_ack = ACK - %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(tok == tok_tcpabs){
 				pos++;
 				skipspace();
 				_ack = ian + atoi(line + pos);
 				PARSE("_ack = IAN + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(isdigit(tok)){
 				_ack = atoi(line + pos);
 				PARSE("_ack = %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp);
+				nextdelim(delim_space delim_tcp delim2_tcp);
 			}else if(tok == tok_tcpdelim){
 				pos++;
 				tcp_state = PAYLOAD;
