@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <pthread.h>
 #include "log.h"
 
 #define IPV4_H 20
@@ -21,12 +22,11 @@
 
 extern packet* packets_tail;
 extern packet* packets_head;
-extern int send_delay;
 extern int listen_only;
 
 long long bandwidth = 0;//-b
 double net_timeout = -1;
-int mtu;
+size_t mtu;
 int ttl = 255;//-T
 int udp_mode = 0;//-u
 
@@ -44,16 +44,17 @@ static int isn_seen = 0;
 static int proto;
 
 static int sock = 0;
+static pthread_t readth;
 
 static struct timeval lastcomm = {0x7fffffffL, 999999};
 #define ELAPS(a,b) ((a.tv_sec-b.tv_sec)*1e6+a.tv_usec-b.tv_usec)
 
 #if __linux__
 #  define IP_MTU 14
-static int get_mtu(){
+static size_t get_mtu(){
 	if(!sock)
 		return -1;
-	int mtu;
+	size_t mtu;
 	socklen_t len = sizeof(mtu);
 	TRY( getsockopt(sock, IPPROTO_IP, IP_MTU, &mtu, &len) );
 	return mtu;
@@ -89,6 +90,7 @@ void net_init(){
 	/* recv timestamp */
 	int on = 1;
 	TRY( setsockopt(sock, SOL_SOCKET, SO_TIMESTAMP, &on, sizeof(on)) );
+
 
 	/* set recv timeout: 1 usec */
 	struct timeval rto = {0, 1};
@@ -134,15 +136,16 @@ void net_init(){
 
 	isn = rand();
 	seq = isn;
-	ian = 0;
-	ack = 0;
 	ip_id = rand()%65535 + 1;
+	
+	TRY( -!!pthread_create(&readth, NULL, net_read, NULL) );
 }
 
-void net_read(){
+void* net_read(void* _){
+	(void)_;
 	if(!sock){
 		DEBUG("socket not initialized.");
-		return;
+		return NULL;
 	}
 
 	char buf[IP_MAXPACKET];
@@ -153,6 +156,7 @@ void net_read(){
 	struct msghdr msg = {NULL, 0, &iov, 1, ctlbuf, sizeof(ctlbuf), 0};
 	ssize_t recv_s;
 
+for(;;){
 	if((recv_s = recvmsg(sock, &msg, 0)) < 0){
 		if(errno == EAGAIN){
 			struct timeval now;
@@ -161,7 +165,7 @@ void net_read(){
 				MESSAGE("net read timed out");
 				exit(EXIT_SUCCESS);
 			}else
-				return;
+				continue;
 		}else
 			ERROR("recvmsg");
 	}
@@ -186,7 +190,7 @@ void net_read(){
 	|| iph->ip_dst.s_addr != local_addr.s_addr
 	|| iph->ip_src.s_addr != dst_addr.s_addr
 	|| ntohs(*sport) != dst_port || ntohs(*dport) != local_port)
-		return;
+		continue;
 
 	DEBUG("new datagram.");
 
@@ -210,12 +214,16 @@ void net_read(){
 		}else if(!ian_seen){
 			ian = ntohl(p->tcp->th_seq);
 			ian_seen = 1;
+			ack = ian;
+			if(p->tcp->th_flags & TH_SYN)
+				ack++;
 		}
-		ack = ntohl(p->tcp->th_seq);
+		/*XXX syn with payload causes target-based difference */
 		if(p->appdata)
 			ack += p->appdata_s;
 	}
-	packet_print(packets_tail);
+}
+	return NULL;
 }
 
 void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
@@ -223,11 +231,13 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 		DEBUG("socket not initialized.");
 		return;
 	}
-	DEBUG("%d,%d,%lu,%lu,%s,%u",_ttl,f,s,a,p,ps);
+	DEBUG("%d,%d,%lu,%lu,%u",_ttl,f,s,a,ps);
 	static size_t lastbyte = 0;
 	static struct timeval lastsent = {0, 0};
 	if(!ps)p = NULL;
 	if(p == NULL)ps = 0;
+	if(IPV4_H + (udp_mode ? UDP_H : TCP_H) + ps > mtu)
+		ps = mtu - IPV4_H - (udp_mode ? UDP_H : TCP_H);
 	size_t sentbyte = 0;
 
 	/* construct packet */
@@ -237,7 +247,7 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 	iph->ip_v = IPVERSION;
 	iph->ip_tos = 0;
 	iph->ip_len = htons(IPV4_H + (udp_mode ? UDP_H : TCP_H) + ps);
-	iph->ip_id = ip_id;
+	iph->ip_id = htons(ip_id);
 	iph->ip_off = 0;
 	iph->ip_ttl = _ttl;
 	iph->ip_p = udp_mode ? IPPROTO_UDP : IPPROTO_TCP;
@@ -260,6 +270,11 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 			memcpy(buf + IPV4_H + TCP_H, p, ps);
 		do_checksum(buf, IPPROTO_TCP, TCP_H + ps);
 
+		if(!isn_seen){
+			if(tcph->th_flags & TH_SYN)
+				seq++;
+			isn_seen = 1;
+		}
 		/*XXX syn with payload causes target-based difference */
 		seq += ps;
 		sentbyte += TCP_H + ps;
@@ -274,11 +289,6 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 
 		sentbyte += UDP_H + ps;
 	}
-
-	/* wait the delay */
-	DEBUG("usleep: %d", send_delay);
-	usleep(send_delay);
-	send_delay = 0;
 
 	/* keep bitrate limit */
 	if(bandwidth){
@@ -296,14 +306,13 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 		packets_head = packets_tail;
 
 	//send...
-	TRY( (signed)(send(sock, buf, sentbyte, 0) - sentbyte) );
+	TRY( send(sock, buf, sentbyte, 0) );
 
 	/* clean up */
 	gettimeofday(&lastsent, NULL);
 	lastbyte = sentbyte;
 	lastcomm = lastsent;
 	packets_tail->time = lastsent;
-	packet_print(packets_tail);
 }
 
 void net_cleanup(){

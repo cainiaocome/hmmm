@@ -1,0 +1,11 @@
+# syn
+s
+
+# wait 1 sec for syn/ack, send ack
+*1;a
+
+# send http request
+pa;GET / HTTP/1.1\r\n\r\n
+
+#wait 1 sec, send rst w/ ack=0
+*1;r,,0

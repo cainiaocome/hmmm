@@ -1,0 +1,2 @@
+for *.ufw file, run `../ufw -vP -w3 $target_addr $port' to use.
+for bash script, run `$script $target_addr $port'

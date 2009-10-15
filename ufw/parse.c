@@ -3,6 +3,7 @@
 #endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <netinet/tcp.h>
 #define TH_ECE 0x40
 #define TH_CWR 0x80
@@ -12,50 +13,61 @@
 #include "log.h"
 
 #define PARSE(format, ...)\
-	if(debug >= 1){\
-		fprintf(stderr, "-P %s:%d: " format ">", __FILE__, __LINE__, \
+	if(debug >= 2){\
+		fprintf(stderr, "-P %s:%d: " format " >", __FILE__, __LINE__, \
 				##__VA_ARGS__);\
 		fwrite(line+pos, 1, n-pos, stderr);\
 		fputc('\n', stderr);\
 	}
 
-
+#ifndef _PARSE_STANDALONE
 extern int mtu;
 extern int udp_mode;
 extern tcp_seq seq, ack, isn, ian;
 extern int ttl;
-extern int send_delay;
+#else
+int verbose = 10;
+int debug = 2;
+int mtu = 1500;
+int udp_mode = 0;
+tcp_seq seq, ack, isn, ian;
+int ttl = 255;
+#endif
 
-static int isdelim(char* delim, char c){
+static int inset(char* delim, char c){
 	while(*delim && c != *delim)delim++;
 	return *delim;
 }
 #define max(a, b) ((a) > (b) ? (a) : (b))
 
 #define tok_repeat 'x'
-#define tok_sleep '.'
-#define tok_usleep ','
+#define tok_sleep '*'
+#define tok_usleep '/'
 #define tok_hdrdelim ';'
 #define tok_tcpdelim ','
-#define tok_tcpdelim2 '.'
-#define tok_tcpplus '+'
-#define tok_tcpminus '-'
+#define tok_gotopayload ':'
+#define tok_tcpemptyflag '_'
+#define tok_tcptmpplus ']'
+#define tok_tcptmpminus '['
+#define tok_tcppreplus '+'
+#define tok_tcppreminus '-'
+#define tok_tcppostplus '+'
+#define tok_tcppostminus '-'
 #define tok_tcpabs '~'
-#define tol_eof 0
 #define tok_payload_esc '\\'
 #define tok_payload_file 'f'
 #define tok_payload_exec 'e'
-#define toks_ctl "x*."
+#define toks_ctl "x*/"
 #define toks_ip "0123456789"
-#define toks_tcp "FSRPAUECfsrpauec"
+#define toks_tcp "FSRPAUECfsrpauec_"
 #define delim_space " \f\n\r\t\v"
 #define delim_hdr ";"
 #define delim_tcp ","
 #define delim2_tcp "."
 
 #define skipspace() while(isspace(line[pos])&&pos<n)pos++
-#define nextdelim(delim) while(!isdelim(delim, line[pos]) && pos < n)pos++
-#define hastoken(tokens) isdelim(tokens, line[pos])
+#define nextdelim(delim) while(!inset(delim, line[pos]) && pos < n)pos++
+#define hastoken(tokens) inset(tokens, line[pos])
 
 void interpret(char* line, size_t n){
 	if(!line)
@@ -67,264 +79,216 @@ void interpret(char* line, size_t n){
 	if(line[pos] == '#' && pos == 0)
 		return;
 
-	static enum {NONE, CTL, IP, TCP, UDP} state = NONE;
-	int t;
+	static enum {CTL, IP, TCP, PAYLOAD} state = CTL;
+	enum {FLAGS, SEQ, ACK} tcp_state = FLAGS;
+	int v, vlen;
 	char tok;
 
 	int _ttl = ttl;
 	int _flags = 0;
-	u_long _seq = seq;
-	u_long _ack = ack;
+	tcp_seq _seq = seq;
+	tcp_seq _ack = ack;
 	char payload[IP_MAXPACKET];
 	size_t payload_s = 0;
 
-	if(state == NONE && pos < n){
-		skipspace();
-		if(hastoken(toks_ctl)){
-			state = CTL;
-			PARSE("state: CTL");
-		}else if(hastoken(toks_ip)){
-			state = IP;
-			PARSE("state: IP");
-		}else if(hastoken(toks_tcp) && !udp_mode){
-			state = TCP;
-			PARSE("state: TCP");
-		}else if(udp_mode){
-			state = UDP;
-			PARSE("state: UDP");
-		}else {
-			state = CTL;
-			PARSE("state: CTL");
-		}
-	}
-	if(state == CTL)
-		PARSE("state: CTL");
-	while(state == CTL && pos < n){
+	while(pos < n){
 		skipspace();
 		tok = line[pos];
 		PARSE("token: %c(%#02x)", tok, tok);
-
-		if(tok == tok_repeat){
-			pos++;
-			skipspace();
-			t = max(atof(line + pos), 0.);
-			PARSE("repeat: %d", t);
-			nextdelim(delim_space delim_hdr);
-			for(t--;t>0;t--){
-				interpret(line + pos, n - pos);
-				state = CTL;
-			}
-		}else if(tok == tok_sleep){
-			pos++;
-			skipspace();
-			send_delay += 1e6*max(atof(line + pos), 0.);
-			PARSE("sleep: %.0f", max(atof(line + pos), 0.));
-			nextdelim(delim_space delim_hdr);
-		}else if(tok == tok_usleep){
-			pos++;
-			skipspace();
-			send_delay += max(atof(line + pos), 0.);
-			PARSE("usleep: %.0f", max(atof(line + pos), 0.));
-			nextdelim(delim_space delim_hdr);
-		}else if(tok == tok_hdrdelim){
-			pos++;
-			state = IP;
-			PARSE("delim. state: IP");
-		}else{ //illegal token
-			PARSE("illegal token: %c(%#02x)", tok, tok);
-			pos++;
-		}
-	}
-	if(state == IP)
-		PARSE("state: IP");
-	if(state == IP && pos < n){
-		skipspace();
-		if(hastoken(toks_ip)){
-			state = IP;
-			PARSE("state: IP");
-		}else if(hastoken(toks_tcp) && !udp_mode){
-			state = TCP;
-			PARSE("state: TCP");
-		}else if(udp_mode){
-			state = UDP;
-			PARSE("state: UDP");
-		}else {
-			state = IP;
-			PARSE("state: IP");
-		}
-	}
-	if(state == IP)
-		PARSE("state: IP");
-	while(state == IP && pos < n){
-		skipspace();
-		tok = line[pos];
-		PARSE("token: %c(%#02x)", tok, tok);
-		if(isdigit(tok)){
-			skipspace();
-			t = atoi(line + pos);
-			if(t < 0)t = 0;
-			if(t > 255)t = 255;
-			_ttl = t;
-			PARSE("ttl = %d", t);
-			nextdelim(delim_space delim_hdr);
-		}else if(tok == tok_hdrdelim){
-			pos++;
-			state = TCP;
-			PARSE("delim. state: TCP");
-		}else{
-			PARSE("illegal token: %c(%#02x)", tok, tok);
-			pos++;
-		}
-	}
-	if(state == TCP)
-		PARSE("state: TCP");
-	if(state == TCP && pos < n){
-		skipspace();
-		if(hastoken(toks_tcp) && !udp_mode){
-			state = TCP;
-			PARSE("state: TCP");
-		}else if(udp_mode){
-			state = UDP;
-			PARSE("state: UDP");
-		}else {
-			state = TCP;
-			PARSE("state: TCP");
-		}
-	}
-
-	enum {FLAGS, SEQ, ACK, PAYLOAD} tcp_state = FLAGS;
-	if(state == TCP && tcp_state == FLAGS)
-		PARSE("tcp-state: FLAGS");
-	if(state == TCP && pos < n){
-		while(tcp_state == FLAGS && pos < n){
-			skipspace();
-			tok = toupper(line[pos]);
-			PARSE("token: %c(%#02x)", tok, tok);
-			if(tok == 'F'){
-				pos++;
-				_flags |= TH_FIN;
-			}else if(tok == 'S'){
-				pos++;
-				_flags |= TH_SYN;
-			}else if(tok == 'R'){
-				pos++;
-				_flags |= TH_RST;
-			}else if(tok == 'P'){
-				pos++;
-				_flags |= TH_PUSH;
-			}else if(tok == 'A'){
-				pos++;
-				_flags |= TH_ACK;
-			}else if(tok == 'U'){
-				pos++;
-				_flags |= TH_URG;
-			}else if(tok == 'E'){
-				pos++;
-				_flags |= TH_ECE;
-			}else if(tok == 'C'){
-				pos++;
-				_flags |= TH_CWR;
-			}else if(tok == tok_tcpdelim){
-				pos++;
-				tcp_state = SEQ;
-				PARSE("delim. tcp-state: SEQ");
-			}else if(tok == tok_tcpdelim2){
-				pos++;
-				tcp_state = PAYLOAD;
-				PARSE("jump. tcp-state: PAYLOAD");
-			}else {
-				PARSE("illegal token");
-				pos++;
-			}
-		}
-		if(tcp_state == SEQ)
-			PARSE("tcp-state: SEQ");
-		while(tcp_state == SEQ && pos < n){
-			skipspace();
-			tok = line[pos];
-			PARSE("token: %c(%#02x)", tok, tok);
-			if(tok == tok_tcpplus){
+		if(state == CTL){
+			if(tok == tok_repeat){
 				pos++;
 				skipspace();
-				_seq += atoi(line + pos);
-				PARSE("_seq = SEQ + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(tok == tok_tcpminus){
+				sscanf(line + pos, "%u%n", &v, &vlen);
+				pos += vlen;
+				PARSE("repeat: %d", v);
+				for(v--; v > 0; v--){
+					interpret(line + pos, n - pos);
+					state = CTL;
+				}
+			}else if(tok == tok_sleep){
 				pos++;
 				skipspace();
-				_seq -= atoi(line + pos);
-				PARSE("_seq = SEQ - %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(tok == tok_tcpabs){
+				sscanf(line + pos, "%u%n", &v, &vlen);
+				pos += vlen;
+				PARSE("sleep: %d", v);
+				sleep(v);//send_delay += v*1000000;
+				_seq = seq; _ack = ack;
+			}else if(tok == tok_usleep){
 				pos++;
 				skipspace();
-				_seq = isn + atoi(line + pos);
-				PARSE("_seq = ISN + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(isdigit(tok)){
-				_seq = atoi(line + pos);
-				PARSE("_seq = %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(tok == tok_tcpdelim){
-				PARSE("delim. tcp-state: ACK");
+				sscanf(line + pos, "%u%n", &v, &vlen);
+				pos += vlen;
+				PARSE("usleep: %d", v);
+				usleep(v);//send_delay += v;
+				_seq = seq; _ack = ack;
+			}else if(tok == tok_hdrdelim){
 				pos++;
-				tcp_state = ACK;
-			}else if(tok == tok_tcpdelim2){
+				state = IP;
+				PARSE("state -> IP");
+			}else if(tok == tok_gotopayload && udp_mode){
 				pos++;
-				tcp_state = PAYLOAD;
-				PARSE("jump. tcp-state: PAYLOAD");
-			}else{
-				PARSE("illegal token: %c(%#02x)", tok, tok);
-				pos++;
-			}
-		}
-		if(tcp_state == ACK)
-			PARSE("tcp-state: ACK");
-		while(tcp_state == ACK && pos < n){
-			skipspace();
-			tok = line[pos];
-			PARSE("token: %c(%#02x)", tok, tok);
-			if(tok == tok_tcpplus){
-				pos++;
-				skipspace();
-				_ack += atoi(line + pos);
-				PARSE("_ack = ACK + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(tok == tok_tcpminus){
-				pos++;
-				skipspace();
-				_ack -= atoi(line + pos);
-				PARSE("_ack = ACK - %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(tok == tok_tcpabs){
-				pos++;
-				skipspace();
-				_ack = ian + atoi(line + pos);
-				PARSE("_ack = IAN + %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(isdigit(tok)){
-				_ack = atoi(line + pos);
-				PARSE("_ack = %d", atoi(line + pos));
-				nextdelim(delim_space delim_tcp delim2_tcp);
-			}else if(tok == tok_tcpdelim){
-				pos++;
-				tcp_state = PAYLOAD;
-				PARSE("delim. tcp-state: PAYLOAD");
+				state = PAYLOAD;
+				PARSE("state -> PAYLOAD");
+			}else if(inset(toks_ip, tok)){
+				state = IP;
+				PARSE("state -> IP");
+			}else if(inset(toks_tcp, tok)){
+				state = TCP;
+				PARSE("state -> TCP");
 			}else{
 				pos++;
-				PARSE("illegal token: %c(%#02x)", tok, tok);
+				PARSE("illegal token: %c", tok);
+				MESSAGE("bad syntax");
+				goto stop_parse;
 			}
-		}
-		if(tcp_state == PAYLOAD)
-			PARSE("tcp-state: PAYLOAD");
-		while(tcp_state == PAYLOAD && pos < n){
-			skipspace();
-			tok = line[pos];
-			if(tok == tok_payload_esc){
-				if(line[pos+1] == tok_payload_file){
-					pos += 2;
+		}else if(state == IP){
+			if(inset(toks_ip, tok)){
+				sscanf(line + pos, "%u%n", &v, &vlen);
+				pos += vlen;
+				_ttl = v;
+				PARSE("ttl: %d", v);
+			}else if(tok == tok_hdrdelim){
+				pos++;
+				state = TCP;
+				PARSE("state -> TCP");
+			}else if(tok == tok_gotopayload && udp_mode){
+				pos++;
+				state = PAYLOAD;
+				PARSE("state -> PAYLOAD");
+			}else if(inset(toks_tcp, tok)){
+				state = TCP;
+				PARSE("state -> TCP");
+			}else{
+				pos++;
+				PARSE("illegal token: %c", tok);
+				MESSAGE("bad syntax");
+				goto stop_parse;
+			}
+		}else if(state == TCP){
+			if(tcp_state == FLAGS){
+				tok = toupper(tok);
+				pos++;
+				if(tok == 'F')
+					_flags |= TH_FIN;
+				else if(tok == 'S')
+					_flags |= TH_SYN;
+				else if(tok == 'R')
+					_flags |= TH_RST;
+				else if(tok == 'P')
+					_flags |= TH_PUSH;
+				else if(tok == 'A')
+					_flags |= TH_ACK;
+				else if(tok == 'U')
+					_flags |= TH_URG;
+				else if(tok == 'E')
+					_flags |= TH_ECE;
+				else if(tok == 'C')
+					_flags |= TH_CWR;
+				else if(tok == tok_tcpemptyflag)
+					_flags |= 0;
+				else if(tok == tok_tcpdelim){
+					tcp_state = SEQ;
+					PARSE("tcp-state -> SEQ");
+				}else if(tok == tok_gotopayload || tok == tok_hdrdelim){
+					state = PAYLOAD;
+					PARSE("state -> PAYLOAD");
+				}else {
+					PARSE("illegal token: %c", tok);
+					MESSAGE("bad syntax");
+					goto stop_parse;
+				}
+			}else if(tcp_state == SEQ || tcp_state == ACK){
+				char* NAME = tcp_state == SEQ ? "SEQ" : "ACK";
+				char* name = tcp_state == SEQ ? "seq" : "ack";
+				tcp_seq* num = tcp_state == SEQ ? &seq : &ack;
+				tcp_seq* _num = tcp_state == SEQ ? &_seq : &_ack;
+				if(tok == tok_tcptmpplus){
+					pos++;
 					skipspace();
-					PARSE("open file: %s", line + pos);
+					sscanf(line + pos, "%u%n", &v, &vlen);
+					pos += vlen;
+					*_num += v;
+					PARSE("send %s as %s + %u", name, NAME, v);
+				}else if(tok == tok_tcptmpminus){
+					pos++;
+					skipspace();
+					sscanf(line + pos, "%u%n", &v, &vlen);
+					pos += vlen;
+					*_num -= v;
+					PARSE("send %s as %s - %u", name, NAME, v);
+				}else if(tok == tok_tcppreplus){
+					pos++;
+					skipspace();
+					sscanf(line + pos, "%u%n", &v, &vlen);
+					pos += vlen;
+					*num += v;
+					*_num = *num;
+					PARSE("%s += %d, and send %s as %s", NAME, v, name, NAME);
+				}else if(tok == tok_tcppreminus){
+					pos++;
+					skipspace();
+					sscanf(line + pos, "%u%n", &v, &vlen);
+					pos += vlen;
+					*num -= v;
+					*_num = *num;
+					PARSE("%s -= %d, and send %s as %s", NAME, v, name, NAME);
+				}else if(tok == tok_tcpabs){
+					pos++;
+					skipspace();
+					sscanf(line + pos, "%u%n", &v, &vlen);
+					pos += vlen;
+					*_num = v;
+					PARSE("send %s as the initial %s + %u", name, NAME, v);
+				}else if(isdigit(tok)){
+					sscanf(line + pos, "%u%n", &v, &vlen);
+					pos += vlen;
+					*_num = v;
+					int has_postfix = 0;
+					if(pos < n){
+						tok = line[pos];
+						if(tok == tok_tcppostplus){
+							pos++;
+							*_num = *num;
+							*num += v;
+							has_postfix = 1;
+							PARSE("send %s as %s, and %s += %u", name, NAME, NAME, v);
+						}else if(tok == tok_tcppostminus){
+							pos++;
+							*_num = *num;
+							*num -= v;
+							has_postfix = 1;
+							PARSE("send %s as %s, and %s += %u", name, NAME, NAME, v);
+						}
+					}
+					if(!has_postfix)
+						PARSE("send %s as %u", name, v);
+				}else if(tok == tok_tcpdelim && tcp_state == SEQ){
+					pos++;
+					tcp_state = ACK;
+					PARSE("tcp-state -> ACK");
+				}else if(tok == tok_tcpdelim && tcp_state == ACK){
+					pos++;
+					state = PAYLOAD;
+					PARSE("state -> PAYLOAD");
+				}else if(tok == tok_hdrdelim || tok == tok_gotopayload){
+					pos++;
+					state = PAYLOAD;
+					PARSE("state -> PAYLOAD");
+				}else{
+					pos++;
+					PARSE("illegal token: %c", tok);
+					MESSAGE("bad syntax");
+					goto stop_parse;
+				}
+			}
+		}else while(state == PAYLOAD && pos < n){
+			tok = line[pos];
+			if(tok == tok_payload_esc && pos+1 < n){
+				pos++;
+				tok = line[pos];
+				if(tok == tok_payload_file){
+					pos++;
 					FILE* f = fopen(line + pos, "r");
 					if(f == NULL){
 						ERROR(line + pos);
@@ -332,11 +296,10 @@ void interpret(char* line, size_t n){
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);
 					}
-					break;
+					pos = n;
+					PARSE("open file: %s", line + pos);
 				}else if(line[pos+1] == tok_payload_exec){
-					pos += 2;
-					skipspace();
-					PARSE("execute: %s", line + pos);
+					pos++;
 					FILE* f = popen(line + pos, "r");
 					if(f == NULL){
 						ERROR(line + pos);
@@ -344,74 +307,31 @@ void interpret(char* line, size_t n){
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);
 					}
-					break;
-				}else if(line[pos+1] == 'n'){
-					pos += 2;
+					pos = n;
+					PARSE("execute: %s", line + pos);
+				}else if(line[pos] == 'n'){
+					pos++;
 					payload[payload_s++] = '\n';
-				}else if(line[pos+1] == 'r'){
-					pos += 2;
+				}else if(line[pos] == 'r'){
+					pos++;
 					payload[payload_s++] = '\r';
-				}else if(line[pos+1] == '\\'){
-					pos += 2;
-					payload[payload_s++] = '\\';
-				}else{
+				}else if(line[pos] == '\\'){
 					pos++;
 					payload[payload_s++] = '\\';
+				}else{
+					payload[payload_s++] = '\\';
 				}
 			}else{
-				pos++;
-				payload[payload_s++] = tok;
+				payload[payload_s++] = line[pos++];
 			}
 		}
 	}
-	if(state == UDP)
-		PARSE("state: UDP");
-	while(state == UDP && pos < n){
-		skipspace();
-		tok = line[pos];
-		if(tok == tok_payload_esc){
-			if(line[pos+1] == tok_payload_file){
-				pos += 2;
-				skipspace();
-				FILE* f = fopen(line + pos, "r");
-				PARSE("open file: %s", line + pos);
-				if(f == NULL){
-					ERROR(line + pos);
-				}else{
-					payload_s = fread(payload + payload_s, 1, mtu - payload_s, f);
-					fclose(f);
-				}
-				break;
-			}else if(line[pos+1] == tok_payload_exec){
-				pos += 2;
-				skipspace();
-				FILE* f = popen(line + pos, "r");
-				PARSE("execute: %s", line + pos);
-				if(f == NULL){
-					ERROR(line + pos);
-				}else{
-					payload_s = fread(payload + payload_s, 1, mtu - payload_s, f);
-					fclose(f);
-				}
-				break;
-			}else if(line[pos+1] == 'n'){
-				pos += 2;
-				payload[payload_s++] = '\n';
-			}else if(line[pos+1] == 'r'){
-				pos += 2;
-				payload[payload_s++] = '\r';
-			}else if(line[pos+1] == '\\'){
-				pos += 2;
-				payload[payload_s++] = '\\';
-			}else{
-				pos++;
-				payload[payload_s++] = '\\';
-			}
-		}else{
-			pos++;
-			payload[payload_s++] = tok;
-		}
-	}
-	PARSE("parse end.");
-	net_send(_ttl, _flags, _seq, _ack, payload, payload_s);
+	PARSE("FIN. ttl:%u flags:%02x seq:%u ack:%u payload_size:%u",
+		_ttl, _flags, _seq - isn, _ack - ian, payload_s);
+
+#ifndef _PARSE_STANDALONE
+		net_send(_ttl, _flags, _seq, _ack, payload, payload_s);
+#endif
+stop_parse:
+	state = CTL;
 }

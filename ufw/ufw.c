@@ -16,12 +16,11 @@
 #include "tcpdump.h"
 
 #define _NAME "ufw"
-#define _DESCR "raw ip layer tool"
+#define _DESCR "raw ip layer, manual tcp"
 #define _DATE "Oct 9,13, 2009"
 #define _VERSION "0.0.1"
 #define USAGE "\
   ufw [OPTIONS] [-l] ADDR [PORT]\n\
-  ufw [OPTIONS] -r file ADDR [PORT]\n\
   options:\n\
         -A                 non-ASCII payload as dot '.'\n\
         -b limit           bandwidth throttling. GgMmKk\n\
@@ -82,7 +81,6 @@ extern u_short dst_port;//PORT
 
 packet* packets_head = NULL;
 packet* packets_tail = NULL;
-int send_delay;
 
 
 int get_range(char* arg, int* lo, int* hi, int default_lo, int default_hi){
@@ -246,7 +244,7 @@ void cleanup(){
 void sighandler(int sig){
 	(void)sig;
 	fprintf(stderr, "** exit on interrupt\n");
-	exit(0);
+	exit(EXIT_SUCCESS);
 }
 
 int main(int argc, char** argv){
@@ -260,6 +258,8 @@ int main(int argc, char** argv){
 	atexit(cleanup);
 	signal(SIGINT, sighandler);
 
+	packet* cur = NULL;
+	packet* printed = NULL;
 	if(!listen_only){
 		if(net_timeout < 0)
 			net_timeout = 5.;
@@ -269,20 +269,29 @@ int main(int argc, char** argv){
 		int flags = fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK;
 		TRY( fcntl(STDIN_FILENO, F_SETFL, flags) )
 		for(;;){
-			if(fgets(linebuf, LINEBS, stdin)){
+			if(!feof(stdin) && fgets(linebuf, LINEBS, stdin)){
 				size_t eol = 0;
 				while(linebuf[eol] != '\n' && linebuf[eol] != '\r' && eol < LINEBS)
 					eol++;
-				send_delay += line_interval*1e6;
+				usleep(line_interval*1e6);
 				interpret(linebuf, eol);
-			}else if(errno == EAGAIN){
-				net_read();
-			}else
+			}else if(!feof(stdin))
 				ERROR("fread");
+			if(cur == NULL){
+				if(printed != NULL && printed->next != NULL)
+					cur = printed->next;
+				else if(printed == NULL && packets_head != NULL)
+					cur = packets_head;
+			}
+			while(cur != NULL){
+				packet_print(cur);
+				printed = cur;
+				cur = cur->next;
+			}
+			usleep(1);
 		}
 	}else{
-		for(;;)
-			net_read();
+		for(;;)usleep(1);
 	}
 
 	return 0;

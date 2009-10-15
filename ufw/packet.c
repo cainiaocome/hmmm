@@ -10,6 +10,7 @@
 #include <netinet/udp.h>
 #include <arpa/inet.h>
 #include "packet.h"
+#include "log.h"
 
 #define IPV4_H 20
 #define TCP_H 20
@@ -17,7 +18,6 @@
 
 extern tcp_seq isn, ian;
 extern packet* packets_head;
-extern int send_delay;
 extern char* dumpfile;
 extern int verbose;
 extern struct in_addr dst_addr;
@@ -131,7 +131,7 @@ static void appdata_print(char* p, size_t n){
 		else
 			PUT(p[i]);
 	}
-	if(payload_display)
+	if(payload_display && n)
 		PRINT("-- APPDATA EOF\n");
 }
 static void tcp_packet_print(packet* p){
@@ -148,7 +148,6 @@ static void tcp_packet_print(packet* p){
 	PRINT(t->th_ack?"%d ":"* ", ntohl(t->th_ack) - _ian);
 	PRINT("%u ", ntohs(t->th_win));
 	if(t->th_x2)PRINT("x2:%1x ", t->th_x2);
-	PUT('[');
 	if(t->th_flags & TH_FIN)PUT('F');
 	if(t->th_flags & TH_SYN)PUT('S');
 	if(t->th_flags & TH_RST)PUT('R');
@@ -157,7 +156,7 @@ static void tcp_packet_print(packet* p){
 	if(t->th_flags & TH_URG)PUT('U');
 	if(t->th_flags & TH_ECE)PUT('E');
 	if(t->th_flags & TH_CWR)PUT('C');
-	PUT(']');
+	if(t->th_flags == 0)PUT('_');
 
 	if(p->tcpopts_s > 0)
 		PUT(' ');
@@ -224,8 +223,6 @@ static void udp_packet_print(packet* p){
 }
 
 void packet_print(packet* p){
-	if(verbose == 0)
-		return;
 	PRINT("%.6f ", p->time.tv_sec - packets_head->time.tv_sec 
 		+ (p->time.tv_usec - packets_head->time.tv_usec)/1e6);
 	if(p->len == UFW_INVALID_SIZE){

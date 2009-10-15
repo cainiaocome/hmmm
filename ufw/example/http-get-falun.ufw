@@ -1,0 +1,11 @@
+# syn
+s
+
+# wait 1 sec for syn/ack, send ack
+*1;a
+
+# send http request
+pa;GET /falun HTTP/1.1\r\nHost: \r\n
+
+#wait 2 sec, send an ack, expecting rst's
+*2;a
