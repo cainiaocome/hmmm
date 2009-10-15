@@ -275,7 +275,7 @@ int main(int argc, char** argv){
 					eol++;
 				usleep(line_interval*1e6);
 				interpret(linebuf, eol);
-			}else if(!feof(stdin))
+			}else if(!feof(stdin) && errno != EAGAIN)
 				ERROR("fread");
 			if(cur == NULL){
 				if(printed != NULL && printed->next != NULL)

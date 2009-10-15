@@ -1,2 +1,2 @@
-for *.ufw file, run `../ufw -vP -w3 $target_addr $port' to use.
+for *.ufw file, run `../ufw -vP -w3 $target_addr $port < $file' to use.
 for bash script, run `$script $target_addr $port'

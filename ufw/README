@@ -8,4 +8,7 @@ make parse-test, then test the interpreter with ./parse-test to debug
 
 
  ** TODO
-TODO
+-a   inline signature analysis for Type recognition
+-d   tcpdump savedump()
+add mutex to avoid race condition
+windows portage
