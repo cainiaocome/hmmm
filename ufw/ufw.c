@@ -22,6 +22,7 @@
 #define USAGE "\
   ufw [OPTIONS] [-l] ADDR [PORT]\n\
   options:\n\
+        -a                 inline signature analysis\n\
         -A                 non-ASCII payload as dot '.'\n\
         -b limit           bandwidth throttling. GgMmKk\n\
         -D[D]              enable debug (twice for interpreter debug)\n\
@@ -67,6 +68,7 @@ int addr_nth = 0;
 extern int print_ascii;//-A
 extern int payload_display;//
 extern int print_hex;//-x
+extern int analysis;
 
 /* net config */
 extern long long bandwidth;//-b
@@ -132,8 +134,11 @@ in_addr_t get_addr(char* arg, struct in_addr* addr, int* net, int nth){
 
 void get_options(int argc, char** argv){
 	int opt;
-	while((opt = getopt(argc, argv, "?Ab:d:Dhi:ln:p:Ps:T:uvVw:x")) != -1)
+	while((opt = getopt(argc, argv, "?aAb:d:Dhi:ln:p:Ps:T:uvVw:x")) != -1)
 		switch(opt){
+			case 'a':
+				analysis = 1;
+				break;
 			case 'A':
 				print_ascii = 1;
 				break;

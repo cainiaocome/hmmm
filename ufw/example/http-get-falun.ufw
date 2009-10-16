@@ -8,4 +8,4 @@ s
 pa;GET /falun HTTP/1.1\r\nHost: \r\n
 
 #wait 2 sec, send an ack, expecting rst's
-*2;a
+@;a

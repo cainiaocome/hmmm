@@ -2,17 +2,19 @@
 s
 
 #send an rst with bad seq
-r,[1
+r,[1,0
 
 #send an ack with bad seq
-a,[1,0
+a,[1
 
-# wait 0.2 sec for syn/ack, send ack
-# choose a good delay to let dest not send the 2nd syn/ack
-/200000;a
+# wait for an syn/ack and an rst, send ack
+@@;a
 
 # send http request
 pa;GET /search?q=falun HTTP/1.1\r\nHost: www.google.com\r\n\r\n
 
-#wait 0.2 sec
-/200000;r,,0
+# wait for one packet
+@
+
+# wait 200 usec
+/200;r,,0

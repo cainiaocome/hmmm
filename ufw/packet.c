@@ -25,6 +25,7 @@ extern struct in_addr dst_addr;
 int print_ascii = 0;//-A
 int payload_display = 0;//-P
 int print_hex = 0;//-x
+int analysis = 0;//-a
 
 #define PRINT(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #define PUT(c) fputc(c, stderr)
@@ -106,8 +107,8 @@ packet_parse_end:
 	pkt->next = NULL;
 	if(cur != NULL){
 		while(cur->next)cur = cur->next;
-		cur->next = pkt;
 		pkt->prev = cur;
+		cur->next = pkt;
 	}
 	return pkt;
 }
@@ -143,11 +144,16 @@ static void tcp_packet_print(packet* p){
 		_isn = ian;
 		_ian = isn;
 	}
+#ifdef _PACKET_FULLADDR
 	PRINT("%5u>%-5u %d:", ntohs(t->th_sport), ntohs(t->th_dport), 
 					ntohl(t->th_seq) - _isn);
 	PRINT(t->th_ack?"%d ":"* ", ntohl(t->th_ack) - _ian);
 	PRINT("%u ", ntohs(t->th_win));
-	if(t->th_x2)PRINT("x2:%1x ", t->th_x2);
+#else
+	PRINT(" %10u:", ntohl(t->th_seq) - _isn);
+	PRINT(t->th_ack?"%-10u ":"*          ", ntohl(t->th_ack) - _ian);
+	PRINT("%5u ", ntohs(t->th_win));
+#endif
 	if(t->th_flags & TH_FIN)PUT('F');
 	if(t->th_flags & TH_SYN)PUT('S');
 	if(t->th_flags & TH_RST)PUT('R');
@@ -157,6 +163,7 @@ static void tcp_packet_print(packet* p){
 	if(t->th_flags & TH_ECE)PUT('E');
 	if(t->th_flags & TH_CWR)PUT('C');
 	if(t->th_flags == 0)PUT('_');
+	if(t->th_x2)PRINT(" x2:%1x", t->th_x2);
 
 	if(p->tcpopts_s > 0)
 		PUT(' ');
@@ -197,8 +204,17 @@ static void tcp_packet_print(packet* p){
 			}
 			i += kind > 1 ? (u_int)p->tcpopts[i+1] : 1;
 	}
+	if(analysis){
+		if(ntohs(t->th_win) % 17 == 0 
+		&& ntohs(p->hdr->ip_id) == 64
+		&& !(ntohs(p->hdr->ip_off) & IP_DF))
+			PRINT(" TYPE-I");
+		if(ntohs(p->hdr->ip_id) == (u_short)(-1 - ntohs(t->th_win)*13)
+		&& (ntohs(p->hdr->ip_off) & IP_DF))
+			PRINT(" TYPE-II");
+	}
 	if(p->appdata_s == UFW_SMALL_SIZE){
-		PRINT("[INVALID PAYLOAD LENGTH]\n");
+		PRINT(" [INVALID PAYLOAD LENGTH]\n");
 		return;
 	}
 	if(p->appdata_s)
@@ -209,8 +225,10 @@ static void tcp_packet_print(packet* p){
 }
 
 static void udp_packet_print(packet* p){
+#ifdef _PACKET_FULLADDR
 	struct udphdr* u = p->udp;
 	PRINT("%5u>%-5u", ntohs(u->uh_sport), ntohs(u->uh_dport));
+#endif
 	if(p->appdata_s == UFW_SMALL_SIZE){
 		p->appdata_s = p->len - p->iph_len - p->udph_len;
 		PRINT(" [INVALID PAYLOAD LENGTH: %d]", p->appdata_s);
@@ -265,13 +283,22 @@ void packet_print(packet* p){
 	PRINT("%c%c%c ", IP_RF&t?'R':'_', IP_DF & t?'D':'_', IP_MF & t?'M':'_');
 	if(IP_OFFMASK & t)PRINT("off:%04x ", IP_OFFMASK & t);
 	PRINT("%3u ", h->ip_ttl);
+#ifdef _PACKET_FULLADDR
 	PRINT("%15s>", inet_ntoa(h->ip_src));
 	PRINT("%-15s", inet_ntoa(h->ip_dst));
+#else
+	if(h->ip_dst.s_addr == dst_addr.s_addr)
+		PRINT(">>S");
+	else
+		PRINT("C<<");
+#endif
 	if(p->ipopts_s){
 		PRINT(" [%d]", p->ipopts_s);
 		printhex(p->ipopts, p->ipopts_s);
 	}
+#ifdef _PACKET_FULLADDR
 	PUT('|');
+#endif
 	switch(p->proto){
 		case IPPROTO_TCP:
 			if(p->tcph_len == UFW_INVALID_SIZE){

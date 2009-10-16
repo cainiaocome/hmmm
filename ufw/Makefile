@@ -1,7 +1,7 @@
 CC = gcc
 LIBS = -lm -lpthread
 INCLUDES = 
-CFLAGS = -Wall -W -Wextra -g
+CFLAGS = -Wall -W -Wextra -O3
 
 OBJS = packet.o net.o parse.o tcpdump.o cksum.o
 

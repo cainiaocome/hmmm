@@ -45,6 +45,7 @@ static int proto;
 
 static int sock = 0;
 static pthread_t readth;
+pthread_mutex_t fastmutex = PTHREAD_MUTEX_INITIALIZER;
 
 static struct timeval lastcomm = {0x7fffffffL, 999999};
 #define ELAPS(a,b) ((a.tv_sec-b.tv_sec)*1e6+a.tv_usec-b.tv_usec)
@@ -197,10 +198,12 @@ for(;;){
 	lastcomm = *recv_time;
 
 	/* new packet */
+	pthread_mutex_lock(&fastmutex);
 	packets_tail = packet_new(buf, recv_s, recv_time, packets_tail);
 	if(packets_head == NULL)
 		packets_head = packets_tail;
 	packet* p = packets_tail;
+	pthread_mutex_unlock(&fastmutex);
 	if(proto == IPPROTO_TCP && p->tcp != NULL){
 		if(listen_only){
 			if(!isn_seen){
@@ -301,17 +304,21 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, size_t ps){
 		}
 	}
 
-	packets_tail = packet_new(buf, sentbyte, NULL, packets_tail);
-	if(packets_head == NULL)
-		packets_head = packets_tail;
-
+	char* snd = alloca(sentbyte);
+	memcpy(snd, buf, sentbyte);
 	//send...
-	TRY( send(sock, buf, sentbyte, 0) );
+	TRY( send(sock, snd, sentbyte, 0) );
 
 	/* clean up */
 	gettimeofday(&lastsent, NULL);
 	lastbyte = sentbyte;
 	lastcomm = lastsent;
+	pthread_mutex_lock(&fastmutex);
+	packets_tail = packet_new(buf, sentbyte, &lastsent, packets_tail);
+	if(packets_head == NULL)
+		packets_head = packets_tail;
+	pthread_mutex_unlock(&fastmutex);
+
 	packets_tail->time = lastsent;
 }
 

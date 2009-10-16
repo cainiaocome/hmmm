@@ -10,6 +10,7 @@
 #include <netinet/ip.h>
 #include <ctype.h>
 #include "net.h"
+#include "packet.h"
 #include "log.h"
 
 #define PARSE(format, ...)\
@@ -25,6 +26,7 @@ extern int mtu;
 extern int udp_mode;
 extern tcp_seq seq, ack, isn, ian;
 extern int ttl;
+extern packet* packets_tail;
 #else
 int verbose = 10;
 int debug = 2;
@@ -32,6 +34,7 @@ int mtu = 1500;
 int udp_mode = 0;
 tcp_seq seq, ack, isn, ian;
 int ttl = 255;
+packet* packets_tail;
 #endif
 
 static int inset(char* delim, char c){
@@ -43,6 +46,7 @@ static int inset(char* delim, char c){
 #define tok_repeat 'x'
 #define tok_sleep '*'
 #define tok_usleep '/'
+#define tok_waitpacket '@'
 #define tok_hdrdelim ';'
 #define tok_tcpdelim ','
 #define tok_gotopayload ':'
@@ -90,6 +94,7 @@ void interpret(char* line, size_t n){
 	tcp_seq _ack = ack;
 	char payload[IP_MAXPACKET];
 	size_t payload_s = 0;
+	packet* cur = packets_tail;
 
 	while(pos < n){
 		skipspace();
@@ -121,6 +126,12 @@ void interpret(char* line, size_t n){
 				pos += vlen;
 				PARSE("usleep: %d", v);
 				usleep(v);//send_delay += v;
+				_seq = seq; _ack = ack;
+			}else if(tok == tok_waitpacket){
+				pos++;
+				PARSE("wait for one packet");
+				while(cur->next == NULL)usleep(1);
+				cur = cur->next;
 				_seq = seq; _ack = ack;
 			}else if(tok == tok_hdrdelim){
 				pos++;
@@ -326,12 +337,13 @@ void interpret(char* line, size_t n){
 			}
 		}
 	}
-	PARSE("FIN. ttl:%u flags:%02x seq:%d ack:%d payload_size:%u",
-		_ttl, _flags, isn - _seq, ian - _ack, payload_s);
-
+	if(state > IP){
+		PARSE("FIN. ttl:%u flags:%02x seq:%d ack:%d payload_size:%u",
+			_ttl, _flags, isn - _seq, ian - _ack, payload_s);
 #ifndef _PARSE_STANDALONE
-		net_send(_ttl, _flags, _seq, _ack, payload, payload_s);
+			net_send(_ttl, _flags, _seq, _ack, payload, payload_s);
 #endif
+	}
 stop_parse:
 	state = CTL;
 }

@@ -23,15 +23,16 @@ name = def          - definition
 
 Whitespaces between tokens are generally ignored.
 		
-LINE    = [CTL ";"] [ IP ";"] TCP ";" PAYLOAD 
+LINE    = [CTL ";"] [IP ";"] [TCP ";" PAYLOAD]
         | CTL ";" IP ";" PAYLOAD | ":" PAYLOAD //udp mode
   colon ":" can be considered as "jump to payload".
 
-CTL     = ("x" <integer> | "*" <integer> | "/" <interger>)*
+CTL     = ("x" <integer> | "*" <integer> | "/" <interger> | "@")*
   control rules:
   xn - repeat the rest of the line n times
   *f - sleep for f seconds
   /f - sleep for f useconds
+  @  - wait until one packet arrives
 
 
 IP      = [ TTL ]
