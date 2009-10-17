@@ -1,14 +1,10 @@
-#ifndef _BSD_SOURCE
-#define _BSD_SOURCE
-#endif
+#include "net_config.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netinet/udp.h>
-#include <arpa/inet.h>
+
 #include "packet.h"
 #include "log.h"
 
@@ -17,7 +13,7 @@
 #define UDP_H 8
 
 extern tcp_seq isn, ian;
-extern packet* packets_head;
+extern packet** packets_buf;
 extern char* dumpfile;
 extern int verbose;
 extern struct in_addr dst_addr;
@@ -33,15 +29,21 @@ int analysis = 0;//-a
 static void printhex(char* s, size_t n){
 	size_t i;
 	for(i = 0; i < n; i++)
+#if __linux__
 		PRINT("%02hhx", s[i]);
+#elif __MINGW32__
+		PRINT("%02x", s[i]);
+#endif
 }
 /*
 
 len should be > IPV4_H
 */
-packet* packet_new(void* p, size_t len, struct timeval* t, packet* cur){
+packet* packet_new(void* p, size_t len, struct timeval* t){
 	struct ip* iph = p;
 	packet* pkt = malloc(sizeof(packet));
+	if(pkt == NULL)
+		return NULL;
 	memset(pkt, 0, sizeof(packet));
 
 #define WRONGSIZE(s) {s = UFW_INVALID_SIZE;goto packet_parse_end;}
@@ -103,13 +105,6 @@ packet* packet_new(void* p, size_t len, struct timeval* t, packet* cur){
 packet_parse_end:
 	if(t != NULL)
 		pkt->time = *t;
-	pkt->prev = NULL;
-	pkt->next = NULL;
-	if(cur != NULL){
-		while(cur->next)cur = cur->next;
-		pkt->prev = cur;
-		cur->next = pkt;
-	}
 	return pkt;
 }
 
@@ -128,7 +123,11 @@ static void appdata_print(char* p, size_t n){
 		else if(print_ascii)
 			PUT('.');
 		else if(print_hex)
+#if __linux__
 			PRINT("\\x%02hhx", p[i]);
+#elif __MINGW32__
+			PRINT("\\x%02x", p[i]);
+#endif
 		else
 			PUT(p[i]);
 	}
@@ -150,8 +149,8 @@ static void tcp_packet_print(packet* p){
 	PRINT(t->th_ack?"%d ":"* ", ntohl(t->th_ack) - _ian);
 	PRINT("%u ", ntohs(t->th_win));
 #else
-	PRINT(" %10u:", ntohl(t->th_seq) - _isn);
-	PRINT(t->th_ack?"%-10u ":"*          ", ntohl(t->th_ack) - _ian);
+	PRINT(" %10u:", (u_int)(ntohl(t->th_seq) - _isn));
+	PRINT(t->th_ack?"%-10u ":"*          ", (u_int)(ntohl(t->th_ack) - _ian));
 	PRINT("%5u ", ntohs(t->th_win));
 #endif
 	if(t->th_flags & TH_FIN)PUT('F');
@@ -194,8 +193,8 @@ static void tcp_packet_print(packet* p){
 					PUT(';');
 					break;
 				case TCPOPT_TIMESTAMP:
-					PRINT("TS=%08x:%08x;", ntohl(*(u_int*)&p->tcpopts[i+2]), 
-							ntohl(*(u_int*)&p->tcpopts[i+6]));
+					PRINT("TS=%08x:%08x;", (u_int)ntohl(*(u_int*)&p->tcpopts[i+2]), 
+							(u_int)ntohl(*(u_int*)&p->tcpopts[i+6]));
 					break;
 				default:
 					PRINT("%02x=", kind);
@@ -241,8 +240,8 @@ static void udp_packet_print(packet* p){
 }
 
 void packet_print(packet* p){
-	PRINT("%.6f ", p->time.tv_sec - packets_head->time.tv_sec 
-		+ (p->time.tv_usec - packets_head->time.tv_usec)/1e6);
+	PRINT("%.6f ", p->time.tv_sec - packets_buf[0]->time.tv_sec
+		+ (p->time.tv_usec - packets_buf[0]->time.tv_usec)/1e6);
 	if(p->len == UFW_INVALID_SIZE){
 		PRINT("[IP PACKET SIZE MORE THAN RECEIVED]\n");
 		return;

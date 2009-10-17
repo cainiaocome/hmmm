@@ -1,15 +1,15 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/types.h>
-#include <netinet/ip.h>
+#include "net_config.h"
 #include "packet.h"
 #include "tcpdump.h"
 #include "log.h"
 
 #define TCPDUMP_MAGIC 0xa1b2c3d4
 #define DLT_NULL 0
-void savedump(char* file, packet* head){
-	if(!file || !head)
+void savedump(char* file, packet** buf, size_t n){
+	if(!file || !buf || !n)
 		return;
 	struct {
 		u_long magic_number;
@@ -28,7 +28,7 @@ void savedump(char* file, packet* head){
 	}else{
 		f = fopen(file, "a+b");
 		if(f == NULL){
-			MESSAGE("failed to open %s", file);
+			LOG_MESSAGE("failed to open %s", file);
 			return;
 		}
 		if(fread(&fhdr, sizeof(fhdr), 1, f) == 1 
@@ -37,16 +37,17 @@ void savedump(char* file, packet* head){
 		if(!has_hdr){
 				f = freopen(file, "wb", f);
 				if(f == NULL){
-					MESSAGE("failed to open %s", file);
+					LOG_MESSAGE("failed to open %s", file);
 					return;
 				}
 		}
 	}
 	if(!has_hdr && fwrite(&pcap_hdr, sizeof(pcap_hdr), 1, f) != 1){
-		MESSAGE("error when writing header");
+		LOG_MESSAGE("error when writing header");
 		return;
 	}
-	while(head){
+	size_t i;
+	for(i = 0; i < n; i++){
 		struct {
 			u_long ts_sec;
 			u_long ts_usec;
@@ -55,18 +56,17 @@ void savedump(char* file, packet* head){
 		}pcaprec_hdr;
 		u_long nullhdr = PF_INET;
 		size_t nullhdr_s = 4;
-		pcaprec_hdr.ts_sec = head->time.tv_sec;
-		pcaprec_hdr.ts_usec = head->time.tv_usec;
-		pcaprec_hdr.incl_len = head->len + nullhdr_s;
-		pcaprec_hdr.orig_len = head->len + nullhdr_s;
+		pcaprec_hdr.ts_sec = buf[i]->time.tv_sec;
+		pcaprec_hdr.ts_usec = buf[i]->time.tv_usec;
+		pcaprec_hdr.incl_len = buf[i]->len + nullhdr_s;
+		pcaprec_hdr.orig_len = buf[i]->len + nullhdr_s;
 		if(fwrite(&pcaprec_hdr, sizeof(pcaprec_hdr), 1, f) != 1
 		|| fwrite(&nullhdr, nullhdr_s, 1, f) != 1
-		|| fwrite(head->hdr, head->len, 1, f) != 1){
-			MESSAGE("write error");
+		|| fwrite(buf[i]->hdr, buf[i]->len, 1, f) != 1){
+			LOG_MESSAGE("write error");
 			fclose(f);
 			return;
 		}
-		head = head->next;
 	}
 	fclose(f);
 }

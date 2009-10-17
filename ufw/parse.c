@@ -4,11 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <netinet/tcp.h>
-#define TH_ECE 0x40
-#define TH_CWR 0x80
-#include <netinet/ip.h>
 #include <ctype.h>
+#include "net_config.h"
 #include "net.h"
 #include "packet.h"
 #include "log.h"
@@ -26,7 +23,7 @@ extern int mtu;
 extern int udp_mode;
 extern tcp_seq seq, ack, isn, ian;
 extern int ttl;
-extern packet* packets_tail;
+extern size_t packets_cur;
 #else
 int verbose = 10;
 int debug = 2;
@@ -34,14 +31,16 @@ int mtu = 1500;
 int udp_mode = 0;
 tcp_seq seq, ack, isn, ian;
 int ttl = 255;
-packet* packets_tail;
+size_t packets_cur = 0;
 #endif
 
 static int inset(char* delim, char c){
 	while(*delim && c != *delim)delim++;
 	return *delim;
 }
+#ifndef max
 #define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
 
 #define tok_repeat 'x'
 #define tok_sleep '*'
@@ -94,7 +93,7 @@ void interpret(char* line, size_t n){
 	tcp_seq _ack = ack;
 	char payload[IP_MAXPACKET];
 	size_t payload_s = 0;
-	packet* cur = packets_tail;
+	size_t cur = packets_cur;
 
 	while(pos < n){
 		skipspace();
@@ -117,7 +116,7 @@ void interpret(char* line, size_t n){
 				sscanf(line + pos, "%u%n", &v, &vlen);
 				pos += vlen;
 				PARSE("sleep: %d", v);
-				sleep(v);//send_delay += v*1000000;
+				usleep(v*1000000);//send_delay += v*1000000;
 				_seq = seq; _ack = ack;
 			}else if(tok == tok_usleep){
 				pos++;
@@ -130,8 +129,8 @@ void interpret(char* line, size_t n){
 			}else if(tok == tok_waitpacket){
 				pos++;
 				PARSE("wait for one packet");
-				while(cur->next == NULL)usleep(1);
-				cur = cur->next;
+				while(cur == packets_cur)usleep(1);
+				cur++;
 				_seq = seq; _ack = ack;
 			}else if(tok == tok_hdrdelim){
 				pos++;
@@ -150,7 +149,7 @@ void interpret(char* line, size_t n){
 			}else{
 				pos++;
 				PARSE("illegal token: %c", tok);
-				MESSAGE("bad syntax");
+				LOG_MESSAGE("bad syntax");
 				goto stop_parse;
 			}
 		}else if(state == IP){
@@ -173,7 +172,7 @@ void interpret(char* line, size_t n){
 			}else{
 				pos++;
 				PARSE("illegal token: %c", tok);
-				MESSAGE("bad syntax");
+				LOG_MESSAGE("bad syntax");
 				goto stop_parse;
 			}
 		}else if(state == TCP){
@@ -206,7 +205,7 @@ void interpret(char* line, size_t n){
 					PARSE("state -> PAYLOAD");
 				}else {
 					PARSE("illegal token: %c", tok);
-					MESSAGE("bad syntax");
+					LOG_MESSAGE("bad syntax");
 					goto stop_parse;
 				}
 			}else if(tcp_state == SEQ || tcp_state == ACK){
@@ -289,7 +288,7 @@ void interpret(char* line, size_t n){
 				}else{
 					pos++;
 					PARSE("illegal token: %c", tok);
-					MESSAGE("bad syntax");
+					LOG_MESSAGE("bad syntax");
 					goto stop_parse;
 				}
 			}
@@ -302,7 +301,7 @@ void interpret(char* line, size_t n){
 					pos++;
 					FILE* f = fopen(line + pos, "r");
 					if(f == NULL){
-						ERROR(line + pos);
+						LOG_ERROR(line + pos);
 					}else{
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);
@@ -313,7 +312,7 @@ void interpret(char* line, size_t n){
 					pos++;
 					FILE* f = popen(line + pos, "r");
 					if(f == NULL){
-						ERROR(line + pos);
+						LOG_ERROR(line + pos);
 					}else{
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);

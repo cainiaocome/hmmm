@@ -1,2 +1,5 @@
 for *.ufw file, run `../ufw -vP -w3 $target_addr $port < $file' to use.
 for bash script, run `$script $target_addr $port'
+
+if you get unstable results, this may be caused by a bug.
+you may report it.

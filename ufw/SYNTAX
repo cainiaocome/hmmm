@@ -85,12 +85,13 @@ PAYLOAD = "\f"<filename> | "\e"<sh>
 
 *** PACKET PRINTABLE FORMAT **************************************************
 
-PACKET   = TIME " " IPH ["|" (TCPH | UDPH) [LF PAYLOAD "-- APPDATA EOF"]] LF 
+PACKET   = TIME " " IPH [("|" | " ") (TCPH | UDPH) 
+           [LF PAYLOAD "-- APPDATA EOF"]] LF 
 
 TIME     = <%.6f>
 
 IPH      = IPHE | [IPTOS " "] IPID " " IPFRAG " " [IPOFF " "] IPTTL " " 
-                  IPSADDR ">" IPDADDR [" " IPOPTS]
+                  ((">>S" | "<<C") | IPSADDR ">" IPDADDR) [" " IPOPTS]
 IPHE     = "[IP PACKET SIZE MORE THAN RECEIVED]"
          | "[IP PACKET SIZE LESS THAN RECEIVED]"
          | "[IP HEADER LENGTH INVALID]"
@@ -111,14 +112,14 @@ IPSADDR  = <%15s>
 IPDADDR  = <%-15s>
 IPOPTS   = "[" <opts len> "]" <opts in hex>
 
-TCPH     = TCPHE | SPORT ">" DPORT " " SEQ ":" ACK " " WND " " [X2 " "]
+TCPH     = TCPHE | [SPORT ">" DPORT] " " SEQ ":" ACK " " WND " " [X2 " "]
                    "[" FLAGS "]" [" " TCPOPTS] [" " PLSIZE]
 UDPH     = UDPHE | SPORT ">" DPORT [" " PLSIZE]
 TCPHE    = "[TCP HEADER LENGTH INVALID]" | "[TCP HEADER LENGTH INSUFFICIENT]"
 UDPHE    = "[UDP HEADER LENGTH INVALID]" | "[UDP HEADER LENGTH INSUFFICIENT]"
 SPORT    = <%5u>
 DPORT    = <%-5u>
-SEQ      =
+SEQ      = 
 ACK      = <relative, %d>
 WND      = <%u>
 X2       = "x2:" <%1x>
