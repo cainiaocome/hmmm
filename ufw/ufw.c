@@ -29,7 +29,6 @@
         -h, -?             this\n\
         -i secs            default delay interval between lines (0.)\n\
         -l                 passive listening only, no sending\n\
-        -n nth             Nth addr in the addr range\n\
         -p port            local port.\n\
         -P                 display payload\n\
         -s addr            local addr\n\
@@ -61,7 +60,6 @@ int debug = 0;
 char* dumpfile = NULL;//-d
 double line_interval = 0.;//-i
 int listen_only = 0;//-l
-int addr_nth = -1;
 packet** packets_buf = NULL;
 size_t packets_limit = 65535;
 size_t packets_cur = -1;
@@ -145,10 +143,10 @@ www.google.com
 www.google.com/24
 1.2.3.4/24
 */
-int get_addr(char* arg, struct in_addr* addr, int* net, int nth){
+int get_addr(char* arg, struct in_addr* addr, int* net){
 	char* s = strdup(arg);
 	char* p = strchr(s, '/');
-	if(p){
+	if(p != NULL){
 		*p++ = 0;
 		if(0 == sscanf(p, "%u", net) || *net > 32 || *net < 0)
 			*net = 32;
@@ -173,14 +171,20 @@ int get_addr(char* arg, struct in_addr* addr, int* net, int nth){
 		}
 	}
 	u_long a = ntohl(addr->s_addr);
-	addr->s_addr = htonl(nth == -1 ? hostrand(a, *net) : hostnth(a, *net, nth));
+	int nth, has_plus = 0;
+	if(p != NULL){
+		p = strchr(p, '+');
+		if(1 == sscanf(p, "%d", &nth))
+			has_plus = 1;
+	}
+	addr->s_addr = htonl(has_plus ? hostnth(a, *net, nth) : hostrand(a, *net));
 	free(s);
 	return 0;
 }
 
 void get_options(int argc, char** argv){
 	int opt;
-	while((opt = getopt(argc, argv, "?aAb:c:d:Dhi:ln:p:Ps:T:uvVw:x")) != -1)
+	while((opt = getopt(argc, argv, "?aAb:c:d:Dhi:lp:Ps:T:uvVw:x")) != -1)
 		switch(opt){
 			case 'a':
 				analysis = 1;
@@ -215,9 +219,6 @@ void get_options(int argc, char** argv){
 				break;
 			case 'l':
 				listen_only = 1;
-				break;
-			case 'n':
-				addr_nth = atoi(optarg);
 				break;
 			case 'p':
 				local_port = get_range(optarg, NULL, NULL, 1, 65535);
@@ -265,7 +266,7 @@ void get_options(int argc, char** argv){
 	LOG_INFO("source: %s:%d", inet_ntoa(local_addr), local_port);
 
 	/* get destination addr and port */
-	if(get_addr(argv[optind++], &dst_addr, &dst_net, addr_nth) < 0
+	if(get_addr(argv[optind++], &dst_addr, &dst_net) < 0
 	|| !dst_addr.s_addr)
 		LOG_FATAL("Invalid destination");
 	dst_port = get_range(argv[optind++], NULL, NULL, 1, 65535);
