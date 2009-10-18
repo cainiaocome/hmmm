@@ -1,8 +1,8 @@
 # syn
 s
 
-# wait 1 sec for syn/ack, send ack
-*1;a
+# wait for syn/ack, send ack
+@;a
 
 # send http request
 pa;GET / HTTP/1.1\r\n\r\n
