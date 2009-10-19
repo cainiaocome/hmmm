@@ -13,10 +13,10 @@
 #define UDP_H 8
 
 extern tcp_seq isn, ian;
-extern packet** packets_buf;
 extern char* dumpfile;
 extern int verbose;
 extern struct in_addr dst_addr;
+extern struct timeval init_time;
 
 int print_ascii = 0;//-A
 int payload_display = 0;//-P
@@ -240,8 +240,8 @@ static void udp_packet_print(packet* p){
 }
 
 void packet_print(packet* p){
-	PRINT("%.6f ", p->time.tv_sec - packets_buf[0]->time.tv_sec
-		+ (p->time.tv_usec - packets_buf[0]->time.tv_usec)/1e6);
+	PRINT("%.6f ", p->time.tv_sec - init_time.tv_sec
+		+ (p->time.tv_usec - init_time.tv_usec)/1e6);
 	if(p->len == UFW_INVALID_SIZE){
 		PRINT("[IP PACKET SIZE MORE THAN RECEIVED]\n");
 		return;

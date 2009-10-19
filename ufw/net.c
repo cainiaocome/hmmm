@@ -42,6 +42,7 @@ u_short dst_port;
 
 tcp_seq seq, ack, isn, ian;
 u_short ip_id;
+struct timeval init_time;
 
 static int ian_seen = 0;
 static int isn_seen = 0;
@@ -243,6 +244,8 @@ for(;;usleep(1)){
 	if(packets_buf[cur % packets_limit])
 		packet_free(packets_buf[cur % packets_limit]);
 	packets_buf[cur % packets_limit] = p;
+	if(!init_time.tv_sec)
+		init_time = recv_time;
 }
 #if __linux__
 	return NULL;
@@ -266,10 +269,14 @@ __stdcall unsigned
 net_print(){
 	size_t i = 0;
 	for(;;usleep(100)){
-		if(i != packets_cur && packets_buf[i])
+		//LOG_DEBUG("i:%d cur:%d saved:%d buf[]:%d", i, packets_cur, packets_saved, (int)packets_buf[i%packets_limit]);
+		if(i != packets_cur && packets_buf[i]){
 			packet_print(packets_buf[i++%packets_limit]);
-		if(packets_cur - packets_saved > 1000)
+		}
+		if(packets_cur - packets_saved > 1000){
 			autosave();
+			i = packets_saved;
+		}
 	}
 #if __linux__
 	return NULL;
@@ -460,6 +467,9 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, int ps){
 	if(packets_buf[cur % packets_limit])
 		packet_free(packets_buf[cur % packets_limit]);
 	packets_buf[cur % packets_limit] = pkt;
+
+	if(!init_time.tv_sec)
+		init_time = lastsent;
 }
 
 void net_cleanup(){
