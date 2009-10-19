@@ -23,7 +23,6 @@
         -a                 inline signature analysis\n\
         -A                 non-ASCII payload as dot '.'\n\
         -b limit           bandwidth throttling. GgMmKk\n\
-        -c count           packets count to receive (65535)\n\
         -D[D]              enable debug (twice for interpreter debug)\n\
         -d file            tcpdump to _file_\n\
         -h, -?             this\n\
@@ -62,7 +61,8 @@ double line_interval = 0.;//-i
 int listen_only = 0;//-l
 packet** packets_buf = NULL;
 size_t packets_limit = 65535;
-size_t packets_cur = -1;
+size_t packets_cur = 0;
+size_t packets_saved = 0;
 
 /* packet config */
 extern int print_ascii;//-A
@@ -184,7 +184,7 @@ int get_addr(char* arg, struct in_addr* addr, int* net){
 
 void get_options(int argc, char** argv){
 	int opt;
-	while((opt = getopt(argc, argv, "?aAb:c:d:Dhi:lp:Ps:T:uvVw:x")) != -1)
+	while((opt = getopt(argc, argv, "?aAb:d:Dhi:lp:Ps:T:uvVw:x")) != -1)
 		switch(opt){
 			case 'a':
 				analysis = 1;
@@ -205,9 +205,11 @@ void get_options(int argc, char** argv){
 				if(c == 'g' || c == 'G') bandwidth *= 1000000000;
 				break;
 			}
+#if 0
 			case 'c':
 				packets_limit = atoi(optarg);
 				break;
+#endif
 			case 'd':
 				dumpfile = optarg;
 				break;
@@ -283,8 +285,20 @@ void get_options(int argc, char** argv){
 	packets_buf = calloc(packets_limit, sizeof(packet*));
 	if(packets_buf == NULL)
 		LOG_FATAL("failed to allocate memory");
+	memset(packets_buf, 0, sizeof(packet*)*packets_limit);
 }
 
+
+void autosave(){
+	LOG_DEBUG("cur:%d saved:%d", packets_cur, packets_saved);
+	size_t cur = packets_cur;
+	if(packets_saved + packets_limit - 10 < cur){
+		LOG_MESSAGE("packets #%d ~ #%d lost", packets_saved, cur - packets_limit + 9);
+		packets_saved = cur - packets_limit + 10;
+	}
+	savedump(dumpfile, packets_buf, packets_saved, cur - packets_saved);
+	packets_saved = cur;
+}
 
 
 void cleanup(){
@@ -296,25 +310,30 @@ void cleanup(){
 		WSACleanup();
 #endif
 
-	if(dumpfile && packets_cur + 1)
-		savedump(dumpfile, packets_buf, packets_cur + 1);
+	if(dumpfile && packets_cur)
+		autosave();
 
 	/* free everything */
 	size_t i;
-	for(i = 0; packets_cur + 1 && i <= packets_cur; i++)
-		packet_free(packets_buf[i]);
+	for(i = 0; packets_cur && i < packets_cur; i++)
+		if(packets_buf[i])
+			packet_free(packets_buf[i]);
 	if(packets_buf)
 		free(packets_buf);
 	fflush(stdout);
 	fflush(stderr);
 }
 
-void sighandler(int sig){
+void inthandler(int sig){
 	(void)sig;
 	fprintf(stderr, "** exit on interrupt\n");
 	exit(EXIT_SUCCESS);
 }
 
+void huphandler(int sig){
+	(void)sig;
+	autosave();
+}
 int main(int argc, char** argv){
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
@@ -329,7 +348,8 @@ int main(int argc, char** argv){
 	net_init();
 
 	atexit(cleanup);
-	signal(SIGINT, sighandler);
+	signal(SIGINT, inthandler);
+	signal(SIGHUP, huphandler);
 
 	if(!listen_only){
 		if(net_timeout < 0)

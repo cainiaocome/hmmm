@@ -23,11 +23,11 @@ extern int verbose, debug;
 	fprintf(stderr, "ufw %s:%d: %s\n", __FILE__, __LINE__, strerror(errno));\
 	exit(EXIT_FAILURE);}else{}
 #define LOG_ERROR(s){\
-	fprintf(stderr, "ufw: %s: #%d\n", s, errno);\
+	fprintf(stderr, "ufw: %s: %s\n", s, strerror(errno));\
 	exit(EXIT_FAILURE);}
 #elif __MINGW32__
 #	define TRY(s) if((s) < 0){\
-	fprintf(stderr, "ufw %s:%d: %s\n", __FILE__, __LINE__, strerror(errno));\
+	fprintf(stderr, "ufw %s:%d: #%d\n", __FILE__, __LINE__, errno);\
 	exit(EXIT_FAILURE);}else{}
 #	define LOG_ERROR(s){\
 	fprintf(stderr, "ufw: %s: #%d\n", s, errno);\

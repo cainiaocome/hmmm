@@ -2,7 +2,6 @@ install libcap2-bin
 cp /usr/share/doc/libcap2-bin/examples/capability.conf /etc/security/
 echo cap_net_admin,cap_net_raw `whoami` >> /etc/security/capability.conf
 make
-make cap
-# make install
+make install
 relogin
 -- FINISH

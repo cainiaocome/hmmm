@@ -25,6 +25,7 @@
 extern packet** packets_buf;
 extern size_t packets_limit;
 extern size_t packets_cur;
+extern size_t packets_saved;
 extern int listen_only;
 
 long long bandwidth = 0;//-b
@@ -216,10 +217,6 @@ for(;;usleep(1)){
 	lastcomm = recv_time;
 
 	/* new packet */
-	if(packets_cur + 1 && packets_cur > packets_limit - 2){
-		LOG_MESSAGE("packets limit reached");
-		exit(EXIT_SUCCESS);
-	}
 	packet* p = packet_new(buf, recv_s, &recv_time);
 	if(proto == IPPROTO_TCP && p->tcp != NULL){
 		if(listen_only){
@@ -242,8 +239,10 @@ for(;;usleep(1)){
 		if(p->appdata)
 			ack += p->appdata_s;
 	}
-	packets_cur++;
-	packets_buf[packets_cur] = p;
+	size_t cur = packets_cur++;
+	if(packets_buf[cur % packets_limit])
+		packet_free(packets_buf[cur % packets_limit]);
+	packets_buf[cur % packets_limit] = p;
 }
 #if __linux__
 	return NULL;
@@ -257,7 +256,7 @@ for(;;usleep(1)){
 
 
 
-
+void autosave();
 static
 #if __linux__
 void* 
@@ -265,10 +264,12 @@ void*
 __stdcall unsigned
 #endif
 net_print(){
-	size_t i = (size_t)-1;
+	size_t i = 0;
 	for(;;usleep(100)){
-		if(i != packets_cur)
-			packet_print(packets_buf[++i]);
+		if(i != packets_cur && packets_buf[i])
+			packet_print(packets_buf[i++%packets_limit]);
+		if(packets_cur - packets_saved > 1000)
+			autosave();
 	}
 #if __linux__
 	return NULL;
@@ -455,13 +456,10 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, int ps){
 	lastcomm = lastsent;
 	pkt->time = lastsent;
 
-	if(packets_cur + 1 && packets_cur > packets_limit - 3){
-		if(pkt)packet_free(pkt);
-		LOG_MESSAGE("packets limit reached");
-		exit(EXIT_SUCCESS);
-	}
-	packets_cur++;
-	packets_buf[packets_cur] = pkt;
+	size_t cur = packets_cur++;
+	if(packets_buf[cur % packets_limit])
+		packet_free(packets_buf[cur % packets_limit]);
+	packets_buf[cur % packets_limit] = pkt;
 }
 
 void net_cleanup(){

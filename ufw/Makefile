@@ -27,6 +27,13 @@ parse.to: parse.c
 
 .PHONY: clean
 
+install:
+	cp -p ufw /usr/sbin/ufw
+	setcap cap_net_admin,cap_net_raw+ei /usr/sbin/ufw
+
+uninstall:
+	rm /usr/sbin/ufw
+
 clean: 
 	rm -f *.o *.to ufw parse-test ufw.exe
 

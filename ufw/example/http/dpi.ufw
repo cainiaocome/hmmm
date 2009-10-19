@@ -1,0 +1,4 @@
+s
+@;a
+pa;GET / HTTP/1.1\r\nHost: example.com\r\nCookie: dongtaiwang.com\r\n\r\n
+*1;r,,0

@@ -338,7 +338,7 @@ void interpret(char* line, size_t n){
 	}
 	if(state > IP){
 		PARSE("FIN. ttl:%u flags:%02x seq:%d ack:%d payload_size:%u",
-			_ttl, _flags, isn - _seq, ian - _ack, payload_s);
+			_ttl, _flags, _seq - isn, _ack - ian, payload_s);
 #ifndef _PARSE_STANDALONE
 			net_send(_ttl, _flags, _seq, _ack, payload, payload_s);
 #endif

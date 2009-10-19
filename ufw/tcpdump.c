@@ -8,9 +8,12 @@
 
 #define TCPDUMP_MAGIC 0xa1b2c3d4
 #define DLT_NULL 0
-void savedump(char* file, packet** buf, size_t n){
+extern size_t packets_limit;
+
+void savedump(char* file, packet** buf, size_t start, size_t n){
 	if(!file || !buf || !n)
 		return;
+	LOG_DEBUG("start:%d n:%d", start, n);
 	struct {
 		u_long magic_number;
 		u_short version_major;
@@ -47,7 +50,9 @@ void savedump(char* file, packet** buf, size_t n){
 		return;
 	}
 	size_t i;
+	size_t pos;
 	for(i = 0; i < n; i++){
+		pos = (start + i)%packets_limit;
 		struct {
 			u_long ts_sec;
 			u_long ts_usec;
@@ -56,17 +61,18 @@ void savedump(char* file, packet** buf, size_t n){
 		}pcaprec_hdr;
 		u_long nullhdr = PF_INET;
 		size_t nullhdr_s = 4;
-		pcaprec_hdr.ts_sec = buf[i]->time.tv_sec;
-		pcaprec_hdr.ts_usec = buf[i]->time.tv_usec;
-		pcaprec_hdr.incl_len = buf[i]->len + nullhdr_s;
-		pcaprec_hdr.orig_len = buf[i]->len + nullhdr_s;
+		pcaprec_hdr.ts_sec = buf[pos]->time.tv_sec;
+		pcaprec_hdr.ts_usec = buf[pos]->time.tv_usec;
+		pcaprec_hdr.incl_len = buf[pos]->len + nullhdr_s;
+		pcaprec_hdr.orig_len = buf[pos]->len + nullhdr_s;
 		if(fwrite(&pcaprec_hdr, sizeof(pcaprec_hdr), 1, f) != 1
 		|| fwrite(&nullhdr, nullhdr_s, 1, f) != 1
-		|| fwrite(buf[i]->hdr, buf[i]->len, 1, f) != 1){
+		|| fwrite(buf[pos]->hdr, buf[pos]->len, 1, f) != 1){
 			LOG_MESSAGE("write error");
 			fclose(f);
 			return;
 		}
+		buf[pos] = NULL;
 	}
 	fclose(f);
 }
