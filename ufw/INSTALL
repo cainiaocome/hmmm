@@ -6,6 +6,7 @@ do a little configuration:
 
 cp /usr/share/doc/libcap2-bin/examples/capability.conf /etc/security/
 echo cap_net_admin,cap_net_raw `whoami` >> /etc/security/capability.conf
+echo auth required pam_cap.so >> /etc/pam.d/common-auth
 
 Sometimes it may require relogin to enable pam_cap.so.
 
