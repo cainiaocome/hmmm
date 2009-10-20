@@ -302,7 +302,8 @@ void interpret(char* line, size_t n){
 					pos++;
 					FILE* f = fopen(line + pos, "r");
 					if(f == NULL){
-						ERROR(line + pos);
+						ERR(line + pos);
+						return;
 					}else{
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);
@@ -313,7 +314,8 @@ void interpret(char* line, size_t n){
 					pos++;
 					FILE* f = popen(line + pos, "r");
 					if(f == NULL){
-						ERROR(line + pos);
+						ERR(line + pos);
+						return;
 					}else{
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);

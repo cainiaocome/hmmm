@@ -78,6 +78,7 @@ extern u_short local_port;//-p
 extern struct in_addr dst_addr;//ADDR
 extern int dst_net;//ADDR
 extern u_short dst_port;//PORT
+extern struct timeval lastcomm;
 
 /* vars */
 GAsyncQueue* packets;
@@ -305,10 +306,9 @@ void cleanup(){
 void inthandler(int sig){
 	(void)sig;
 	if(sig == SIGINT)
-		MESSAGE("** exit on interrupt");
+		MESSAGE("exit on interrupt");
 	exit(EXIT_SUCCESS);
 }
-
 
 int init(int argc, char** argv){
 	DEBUG("main init");
@@ -325,7 +325,7 @@ int init(int argc, char** argv){
 
 	packets = g_async_queue_new();
 	if(packets == NULL){
-		ERROR("g_async_queue_new");
+		ERR("g_async_queue_new");
 		return -1;
 	}
 
@@ -335,16 +335,26 @@ int init(int argc, char** argv){
 	GError* err;
 	printpkt_thrd = g_thread_create(printpkt, NULL, 1, &err);
 	if(printpkt_thrd == NULL){
-		ERROR(err->message);
+		ERR(err->message);
 		return -1;
 	}
 
-	if(atexit(cleanup))
+	if(atexit(cleanup)){
+		ERR("atexit");
 		return -1;
-	if(signal(SIGINT, inthandler) == SIG_ERR)
+	}
+	if(signal(SIGINT, inthandler) == SIG_ERR){
+		ERR("signal");
 		return -1;
-	if(signal(SIGTERM, inthandler) == SIG_ERR)
+	}
+	if(signal(SIGTERM, inthandler) == SIG_ERR){
+		ERR("signal");
 		return -1;
+	}
+	if(signal(SIGHUP, SIG_IGN) == SIG_ERR){
+		ERR("signal");
+		return -1;
+	}
 	return 0;
 }
 
@@ -358,14 +368,18 @@ int main(int argc, char** argv){
 #define LINEBS 65535
 		char linebuf[LINEBS];
 
-		for(;!exiting;){
+		for(;;){
 			if(!feof(stdin) && fgets(linebuf, LINEBS, stdin)){
 				size_t eol = 0;
 				while(linebuf[eol] != '\n' && linebuf[eol] != '\r' && eol < LINEBS)
 					eol++;
 				usleep(line_interval*1e6);
 				interpret(linebuf, eol);
-			}else usleep(1000);
+			}else if(feof(stdin)){
+				if(lastcomm.tv_sec == 0x7fffffffL)
+					gettimeofday(&lastcomm, NULL);
+				usleep(1000);
+			}
 		}
 	}else{
 		for(;;)usleep(1);

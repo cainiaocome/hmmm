@@ -20,6 +20,10 @@ extern int verbose, debug;
 	if(verbose >= 1)\
 		fprintf(stderr, "** " format "\n", ##__VA_ARGS__);
 
+#define ERR(s){\
+	fprintf(stderr, "ufw: %s:%d: %s\n", __FILE__, __LINE__, s);\
+}
+
 #define ERROR(s){\
 	fprintf(stderr, "ufw: %s:%d: %s: %s\n", __FILE__, __LINE__, \
 		s, strerror(errno));\

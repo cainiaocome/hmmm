@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <signal.h>
 
 #include <glib.h>
 
@@ -19,7 +20,6 @@
 
 extern GAsyncQueue* packets;
 extern int listen_only;
-extern int exiting;
 
 long long bandwidth = 0;//-b
 double net_timeout = -1;
@@ -27,6 +27,7 @@ int mtu;
 int ttl = 255;//-T
 int udp_mode = 0;//-u
 size_t received_packets = 0;
+struct timeval lastcomm = {0x7fffffffL, 999999};
 
 struct in_addr local_addr;
 u_short local_port;//-p
@@ -46,7 +47,6 @@ static int sock = 0;
 static GThread* read_thrd;
 static int read_exiting = 0;
 
-static struct timeval lastcomm = {0x7fffffffL, 999999};
 #define ELAPS(a,b) ((a.tv_sec-b.tv_sec)*1e6+a.tv_usec-b.tv_usec)
 
 
@@ -72,13 +72,13 @@ for(;!read_exiting;usleep(1)){
 			gettimeofday(&now, NULL);
 			if(net_timeout > 0 && ELAPS(now, lastcomm)/1e6 > net_timeout){
 				MESSAGE("net read timed out");
-				exiting = 1;
+				kill(getpid(), SIGTERM);//should be right
 				return _;
 			}else
 				continue;
 		}else{
 			ERROR("recvmsg");
-			exiting = 1;
+			kill(getpid(), SIGTERM);//should be right
 			return _;
 		}
 	}
@@ -219,7 +219,7 @@ int net_init(){
 	GError* err;
 	read_thrd = g_thread_create(net_read, NULL, 1, &err);
 	if(read_thrd == NULL){
-		ERROR(err->message);
+		ERR(err->message);
 		return -1;
 	}
 	return 0;
