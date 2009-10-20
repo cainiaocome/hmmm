@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <glib.h>
 #include "net_config.h"
 #include "net.h"
 #include "packet.h"
@@ -23,7 +24,7 @@ extern int mtu;
 extern int udp_mode;
 extern tcp_seq seq, ack, isn, ian;
 extern int ttl;
-extern size_t packets_cur;
+extern size_t received_packets;
 #else
 int verbose = 10;
 int debug = 2;
@@ -31,7 +32,7 @@ int mtu = 1500;
 int udp_mode = 0;
 tcp_seq seq, ack, isn, ian;
 int ttl = 255;
-size_t packets_cur = 0;
+size_t received_packets;
 #endif
 
 static int inset(char* delim, char c){
@@ -93,7 +94,7 @@ void interpret(char* line, size_t n){
 	tcp_seq _ack = ack;
 	char payload[IP_MAXPACKET];
 	size_t payload_s = 0;
-	size_t cur = packets_cur;
+	size_t cur = received_packets;
 
 	while(pos < n){
 		skipspace();
@@ -129,7 +130,7 @@ void interpret(char* line, size_t n){
 			}else if(tok == tok_waitpacket){
 				pos++;
 				PARSE("wait for one packet");
-				while(cur == packets_cur)usleep(1);
+				while(cur == received_packets)usleep(1);
 				cur++;
 				_seq = seq; _ack = ack;
 			}else if(tok == tok_hdrdelim){
@@ -149,7 +150,7 @@ void interpret(char* line, size_t n){
 			}else{
 				pos++;
 				PARSE("illegal token: %c", tok);
-				LOG_MESSAGE("bad syntax");
+				MESSAGE("bad syntax");
 				goto stop_parse;
 			}
 		}else if(state == IP){
@@ -172,7 +173,7 @@ void interpret(char* line, size_t n){
 			}else{
 				pos++;
 				PARSE("illegal token: %c", tok);
-				LOG_MESSAGE("bad syntax");
+				MESSAGE("bad syntax");
 				goto stop_parse;
 			}
 		}else if(state == TCP){
@@ -205,7 +206,7 @@ void interpret(char* line, size_t n){
 					PARSE("state -> PAYLOAD");
 				}else {
 					PARSE("illegal token: %c", tok);
-					LOG_MESSAGE("bad syntax");
+					MESSAGE("bad syntax");
 					goto stop_parse;
 				}
 			}else if(tcp_state == SEQ || tcp_state == ACK){
@@ -288,7 +289,7 @@ void interpret(char* line, size_t n){
 				}else{
 					pos++;
 					PARSE("illegal token: %c", tok);
-					LOG_MESSAGE("bad syntax");
+					MESSAGE("bad syntax");
 					goto stop_parse;
 				}
 			}
@@ -301,7 +302,7 @@ void interpret(char* line, size_t n){
 					pos++;
 					FILE* f = fopen(line + pos, "r");
 					if(f == NULL){
-						LOG_ERROR(line + pos);
+						ERROR(line + pos);
 					}else{
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);
@@ -312,7 +313,7 @@ void interpret(char* line, size_t n){
 					pos++;
 					FILE* f = popen(line + pos, "r");
 					if(f == NULL){
-						LOG_ERROR(line + pos);
+						ERROR(line + pos);
 					}else{
 						payload_s = fread(payload, 1, mtu, f);
 						fclose(f);

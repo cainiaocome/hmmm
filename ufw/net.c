@@ -3,11 +3,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-#if __linux__
-#include <pthread.h>
-#elif __MIGNW32__
-#include <windows.h>
-#endif
+#include <glib.h>
 
 #include "log.h"
 #include "net.h"
@@ -15,24 +11,22 @@
 #include "cksum.h"
 
 
-#if __MINGW32__
-#	ifdef errno 
-#		undef errno
-#	endif
-#	define errno WSAGetLastError()
-#endif
+#define TRY(s) if((s) < 0){\
+	fprintf(stderr, "ufw %s:%d: %s\n", __FILE__, __LINE__, strerror(errno));\
+	return -1;}else{}
 
-extern packet** packets_buf;
-extern size_t packets_limit;
-extern size_t packets_cur;
-extern size_t packets_saved;
+
+
+extern GAsyncQueue* packets;
 extern int listen_only;
+extern int exiting;
 
 long long bandwidth = 0;//-b
 double net_timeout = -1;
 int mtu;
 int ttl = 255;//-T
 int udp_mode = 0;//-u
+size_t received_packets = 0;
 
 struct in_addr local_addr;
 u_short local_port;//-p
@@ -48,132 +42,45 @@ static int ian_seen = 0;
 static int isn_seen = 0;
 static int proto;
 
-#if __linux__
 static int sock = 0;
-#elif __MINGW32__
-static SOCKET sock = 0;
-#endif
-
-#if __linux__
-static pthread_t thrd_read;
-static pthread_t thrd_print;
-static int thread_create(pthread_t* thread, void*(*func)(void*)){
-	int r = pthread_create(thread, NULL, func, NULL);
-	return r > 0 ? -r : r;
-}
-
-#elif __MINGW32__
-uintptr_t thrd_read;
-uintptr_t thrd_print;
-static int thread_create(uintptr_t* thread, unsigned(__stdcall * func)(void*)){
-	*thread = _beginthreadex(NULL, 0, func, NULL, 0, NULL);
-	return *thread == 0 ? -1 : 0;
-}
-#endif
+static GThread* read_thrd;
+static int read_exiting = 0;
 
 static struct timeval lastcomm = {0x7fffffffL, 999999};
 #define ELAPS(a,b) ((a.tv_sec-b.tv_sec)*1e6+a.tv_usec-b.tv_usec)
 
-static int get_mtu(){
-	if(!sock)
-		return -1;
-	int mtu = -1;
 
-#if __linux__
-#	define IP_MTU 14
-	socklen_t len = sizeof(mtu);
-	if(getsockopt(sock, IPPROTO_IP, IP_MTU, &mtu, &len) < 0)
-		return -1;
-
-#elif __MINGW32__
-	int iter = 0;
-	DWORD ret;
-	IP_ADAPTER_ADDRESSES* adapters = NULL;
-	do {
-		ULONG buf_s = 15000;
-		adapters = (IP_ADAPTER_ADDRESSES*)malloc(buf_s);
-		if (adapters == NULL) {
-			return -1;
-		}
-
-		ULONG flags = GAA_FLAG_SKIP_ANYCAST	| GAA_FLAG_SKIP_DNS_SERVER
-			| GAA_FLAG_SKIP_FRIENDLY_NAME	| GAA_FLAG_SKIP_MULTICAST;
-		ret = GetAdaptersAddresses(AF_INET, flags, NULL, adapters, &buf_s);
-
-		if (ret == ERROR_BUFFER_OVERFLOW) {
-			free(adapters);
-			adapters = NULL;
-		} else {
-			break;
-		}
-		iter++;
-	} while ((ret == ERROR_BUFFER_OVERFLOW) && (iter < 3));
-
-	if(ret == NO_ERROR){
-		IP_ADAPTER_ADDRESSES* cur_adapter = NULL;
-		for(cur_adapter = adapters; cur_adapter; cur_adapter = cur_adapter->Next){
-			IP_ADAPTER_UNICAST_ADDRESS* uni = NULL;
-			for(uni = cur_adapter->FirstUnicastAddress; uni; uni = uni->Next){
-				struct sockaddr_in* addr;
-				addr = (struct sockaddr_in*)uni->Address.lpSockaddr;
-				if(addr->sin_addr.s_addr == local_addr.s_addr){
-					mtu = (int)cur_adapter->Mtu;
-					break;
-				}
-			}
-		}
-	}
-	if(adapters)
-		free(adapters);
-#endif
-
-	return mtu;
-}
-
-
-
-
-
-
-#if __linux__
-void* 
-#elif __MINGW32__
-__stdcall unsigned
-#endif
-net_read(void* _){
+void* net_read(void* _){
 	(void)_;
 	if(!sock){
-		LOG_DEBUG("socket not initialized.");
-#if __linux__
-		return NULL;
-#elif __MINGW32__
-		return 0;
-#endif
+		DEBUG("socket not initialized.");
+		return _;
 	}
 
 	char buf[IP_MAXPACKET];
 	struct ip* iph = (struct ip*)buf;
 	struct timeval recv_time;
-#if __linux__
 	char ctlbuf[4096];
 	struct iovec iov = {buf, sizeof(buf)};
 	struct msghdr msg = {NULL, 0, &iov, 1, ctlbuf, sizeof(ctlbuf), 0};
-#endif
 	ssize_t recv_s;
 
-for(;;usleep(1)){
-#if __linux__
+for(;!read_exiting;usleep(1)){
 	if((recv_s = recvmsg(sock, &msg, 0)) < 0){
 		if(errno == EAGAIN){
 			struct timeval now;
 			gettimeofday(&now, NULL);
 			if(net_timeout > 0 && ELAPS(now, lastcomm)/1e6 > net_timeout){
-				LOG_MESSAGE("net read timed out");
-				exit(EXIT_SUCCESS);
+				MESSAGE("net read timed out");
+				exiting = 1;
+				return _;
 			}else
 				continue;
-		}else
-			LOG_ERROR("recvmsg");
+		}else{
+			ERROR("recvmsg");
+			exiting = 1;
+			return _;
+		}
 	}
 
 	/* get timestamp */	
@@ -187,21 +94,6 @@ for(;;usleep(1)){
 			break;
 		}
 	}
-#elif __MINGW32__
-	if((recv_s = recv(sock, buf, IP_MAXPACKET, 0)) < 0){
-		if(errno == EAGAIN){
-			struct timeval now;
-			gettimeofday(&now, NULL);
-			if(net_timeout > 0 && ELAPS(now, lastcomm)/1e6 > net_timeout){
-				LOG_MESSAGE("net read timed out");
-				exit(EXIT_SUCCESS);
-			}else
-				continue;
-		}else
-			LOG_ERROR("recv");
-	}
-	gettimeofday(&recv_time, NULL);
-#endif
 
 	/* filter */
 	u_short* sport = (u_short*)(buf + iph->ip_hl*4);
@@ -213,7 +105,7 @@ for(;;usleep(1)){
 	|| ntohs(*sport) != dst_port || ntohs(*dport) != local_port)
 		continue;
 
-	LOG_DEBUG("new datagram.");
+	DEBUG("new datagram.");
 
 	lastcomm = recv_time;
 
@@ -240,71 +132,32 @@ for(;;usleep(1)){
 		if(p->appdata)
 			ack += p->appdata_s;
 	}
-	size_t cur = packets_cur++;
-	if(packets_buf[cur % packets_limit])
-		packet_free(packets_buf[cur % packets_limit]);
-	packets_buf[cur % packets_limit] = p;
+	g_async_queue_push(packets, p);
+	received_packets++;
 	if(!init_time.tv_sec)
 		init_time = recv_time;
 }
-#if __linux__
-	return NULL;
-#elif __MINGW32__
-	return 0;
-#endif
+	return _;
 }
 
-
-
-
-
-
-void autosave();
-static
-#if __linux__
-void* 
-#elif __MINGW32__
-__stdcall unsigned
-#endif
-net_print(){
-	size_t i = 0;
-	for(;;usleep(100)){
-		//LOG_DEBUG("i:%d cur:%d saved:%d buf[]:%d", i, packets_cur, packets_saved, (int)packets_buf[i%packets_limit]);
-		if(i != packets_cur && packets_buf[i]){
-			packet_print(packets_buf[i++%packets_limit]);
-		}
-		if(packets_cur - packets_saved > 1000){
-			autosave();
-			i = packets_saved;
-		}
-	}
-#if __linux__
-	return NULL;
-#elif __MINGW32__
-	return 0;
-#endif
-}
-void net_init(){
+int net_init(){
 	if(sock){
-		LOG_DEBUG("socket not initialized.");
-		return;
+		DEBUG("double init");
+		return -1;
 	}
 
 	proto = udp_mode ? IPPROTO_UDP : IPPROTO_TCP;
 
 	/*XXX CAP_NET_RAW  */
-	TRY( (int)(sock = socket(PF_INET, SOCK_RAW, proto)) );
-	LOG_DEBUG("sock set up.");
+	TRY( sock = socket(PF_INET, SOCK_RAW, proto) );
+	DEBUG("sock set up.");
 	socklen_t optlen;
 
-#if 0
 	/* no linger */
 	struct linger lg = { 0, 0 };
 	TRY( setsockopt(sock, SOL_SOCKET, SO_LINGER, (char*)&lg, sizeof(lg)) );
-#endif
 	int on = 1;
 
-#if __linux__
 	/* high socket priority
 	XXX CAP_NET_ADMIN 
 	*/
@@ -313,10 +166,9 @@ void net_init(){
 
 	/* recv timestamp */
 	TRY( setsockopt(sock, SOL_SOCKET, SO_TIMESTAMP, (char*)&on, sizeof(on)) );
-#endif
 
 	/* set recv timeout: 1 usec */
-	struct timeval rto = {0, 1};
+	struct timeval rto = {0, 10};
 	TRY( setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&rto, sizeof(rto)) );
 
 	/* customize ip hdr */
@@ -329,16 +181,13 @@ void net_init(){
 	local.sin_addr = local_addr;
 	if(!local_addr.s_addr 
 		&& bind(sock, (struct sockaddr*)&local, sizeof(local)) < 0){
-#if __linux__
 		if(errno == EADDRNOTAVAIL){
-#elif __MINGW32__
-		if(errno == WSAEADDRNOTAVAIL){
-#endif
-			LOG_INFO("Non-local source addr: %s", inet_ntoa(local_addr));
+			INFO("Non-local source addr: %s", inet_ntoa(local_addr));
 			local.sin_addr.s_addr = INADDR_ANY;
 			TRY( bind(sock, (struct sockaddr*)&local, sizeof(local)) );
 		}else{
-			LOG_ERROR("bind");
+			ERROR("bind");
+			return -1;
 		}
 	}
 
@@ -348,27 +197,32 @@ void net_init(){
 	dst.sin_port = IPPROTO_TCP;
 	dst.sin_addr = dst_addr;
 	TRY( connect(sock, (struct sockaddr*)&dst, sizeof(dst)) );
-	LOG_DEBUG("sock connected.");
+	DEBUG("sock connected.");
 
 	/* get mtu */
-	mtu = get_mtu();
-	if(mtu < 0)
-		LOG_FATAL("failed to get valid mtu");
-	LOG_DEBUG("mtu is %d.", mtu);
+	optlen = sizeof(mtu);
+#define IP_MTU 14
+	TRY( getsockopt(sock, IPPROTO_IP, IP_MTU, &mtu, &optlen) );
+	DEBUG("mtu is %d.", mtu);
 
 	/* if local addr not given, fill in it with autobind result */
 	optlen = sizeof(local);
 	TRY( getsockname(sock, (struct sockaddr*)&local, &optlen) );
 	if(!local_addr.s_addr)
 		local_addr = local.sin_addr;
-	LOG_INFO("bind addr: %s", inet_ntoa(local_addr));
+	INFO("bind addr: %s", inet_ntoa(local_addr));
 
 	isn = rand();
 	seq = isn;
 	ip_id = rand()%65535 + 1;
 
-	TRY( thread_create(&thrd_read, net_read) );
-	TRY( thread_create(&thrd_print, net_print) );
+	GError* err;
+	read_thrd = g_thread_create(net_read, NULL, 1, &err);
+	if(read_thrd == NULL){
+		ERROR(err->message);
+		return -1;
+	}
+	return 0;
 }
 
 
@@ -378,18 +232,20 @@ void net_init(){
 
 
 
-void net_send(int _ttl, int f, u_long s, u_long a, char* p, int ps){
+int net_send(int _ttl, int f, u_long s, u_long a, char* p, int ps){
 	if(!sock){
-		LOG_DEBUG("socket not initialized.");
-		return;
+		DEBUG("socket not initialized.");
+		return -1;
 	}
-	LOG_DEBUG("%d,%d,%lu,%lu,%u",_ttl,f,s,a,ps);
+	DEBUG("%d,%d,%lu,%lu,%u",_ttl,f,s,a,ps);
 	static size_t lastbyte = 0;
 	static struct timeval lastsent = {0, 0};
 	if(!ps)p = NULL;
 	if(p == NULL)ps = 0;
-	if(IPV4_H + (udp_mode ? UDP_H : TCP_H) + ps > mtu)
+	if(IPV4_H + (udp_mode ? UDP_H : TCP_H) + ps > mtu){
+		MESSAGE("packet is larger than mtu, truncated.");
 		ps = mtu - IPV4_H - (udp_mode ? UDP_H : TCP_H);
+	}
 	size_t sentbyte = 0;
 
 	/* construct packet */
@@ -448,7 +304,7 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, int ps){
 		gettimeofday(&now, NULL);
 		double bitrate_delay = lastbyte*8e6/bandwidth - ELAPS(now, lastsent);
 		if(bitrate_delay >= 1){
-			LOG_DEBUG("bandwidth throttling usleep: %.0f", bitrate_delay);
+			DEBUG("bandwidth throttling usleep: %.0f", bitrate_delay);
 			usleep(bitrate_delay);
 		}
 	}
@@ -462,25 +318,21 @@ void net_send(int _ttl, int f, u_long s, u_long a, char* p, int ps){
 	lastbyte = sentbyte;
 	lastcomm = lastsent;
 	pkt->time = lastsent;
-
-	size_t cur = packets_cur++;
-	if(packets_buf[cur % packets_limit])
-		packet_free(packets_buf[cur % packets_limit]);
-	packets_buf[cur % packets_limit] = pkt;
-
 	if(!init_time.tv_sec)
 		init_time = lastsent;
+
+	g_async_queue_push(packets, pkt);
+	return 0;
 }
 
 void net_cleanup(){
 	if(!sock){
-		LOG_DEBUG("socket not initialized.");
+		DEBUG("not initialized.");
 		return;
 	}
-#if __linux__
+	read_exiting = 1;
+	if(read_thrd)
+		g_thread_join(read_thrd);
 	close(sock);
-#elif __MINGW32__
-	closesocket(sock);
-#endif
-	LOG_DEBUG("socket closed.");
+	DEBUG("socket closed.");
 }

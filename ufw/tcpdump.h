@@ -3,8 +3,9 @@
 
 #include "packet.h"
 
-void savedump(char* file, packet** buf, size_t start, size_t n);
-packet* loaddump(char* file);
+int dump_init(char* dumpfile);
+void dump_packet(packet*);
+void dump_cleanup();
 
 #endif /* _UFW_TCPDUMP_H */
 

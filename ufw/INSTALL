@@ -1,7 +1,27 @@
-install libcap2-bin
+UFW
+
+1. run as non-priveledged user
+If you want to run ufw without root, you may install libcap2-bin firstly and
+do a little configuration:
+
 cp /usr/share/doc/libcap2-bin/examples/capability.conf /etc/security/
 echo cap_net_admin,cap_net_raw `whoami` >> /etc/security/capability.conf
+
+Sometimes it may require relogin to enable pam_cap.so.
+
+2. no rst
+You may want to prevent kernel from sending rst for inbound syn/ack by
+
+make norst
+
+3. install
 make
 make install
-relogin
--- FINISH
+
+will install one file to /usr/sbin/ufw. 
+
+If you want line output with full ip addresses and ports format, you can make 
+with DEFINES=-D_PACKET_FULLADDR.
+
+4. make parse-test
+to test line interpreter separately.

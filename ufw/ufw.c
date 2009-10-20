@@ -7,6 +7,8 @@
 #include <math.h>
 #include <unistd.h>
 #include <signal.h>
+#include <glib.h>
+
 #include "log.h"
 #include "packet.h"
 #include "net.h"
@@ -59,16 +61,12 @@ int debug = 0;
 char* dumpfile = NULL;//-d
 double line_interval = 0.;//-i
 int listen_only = 0;//-l
-packet** packets_buf = NULL;
-size_t packets_limit = 65535;
-size_t packets_cur = 0;
-size_t packets_saved = 0;
 
 /* packet config */
 extern int print_ascii;//-A
-extern int payload_display;//
+extern int print_payload;//
 extern int print_hex;//-x
-extern int analysis;
+extern int print_analysis;
 
 /* net config */
 extern long long bandwidth;//-b
@@ -81,9 +79,12 @@ extern struct in_addr dst_addr;//ADDR
 extern int dst_net;//ADDR
 extern u_short dst_port;//PORT
 
-#if __MINGW32__
-static WSADATA wsaData;
-#endif
+/* vars */
+GAsyncQueue* packets;
+GThread* printpkt_thrd;
+int exiting = 0;
+
+
 
 int get_range(char* arg, int* lo, int* hi, int default_lo, int default_hi){
 	char hyphen[] = "-";
@@ -118,7 +119,7 @@ int resolv_addr(char* name, struct in_addr* addr){
 	struct addrinfo* cur;
 	int r = getaddrinfo(name, NULL, &hints, &result);
 	if(r){
-		LOG_DEBUG("getaddrinfo: %s", gai_strerror(r));
+		DEBUG("getaddrinfo: %s", gai_strerror(r));
 		return -1;
 	}
 	int num = 0;
@@ -182,34 +183,25 @@ int get_addr(char* arg, struct in_addr* addr, int* net){
 	return 0;
 }
 
-void get_options(int argc, char** argv){
+int get_options(int argc, char** argv){
 	int opt;
 	while((opt = getopt(argc, argv, "?aAb:d:Dhi:lp:Ps:T:uvVw:x")) != -1)
 		switch(opt){
 			case 'a':
-				analysis = 1;
+				print_analysis = 1;
 				break;
 			case 'A':
 				print_ascii = 1;
 				break;
 			case 'b':{
 				char c;
-#if __linux__
 				sscanf(optarg, "%llu%c", &bandwidth, &c);
-#elif __MINGW32__ //m$ runtime mess
-				sscanf(optarg, "%I64u%c", &bandwidth, &c);
-#endif
 				if(bandwidth < 0)bandwidth = 0;
 				if(c == 'k' || c == 'K') bandwidth *= 1000;
 				if(c == 'm' || c == 'M') bandwidth *= 1000000;
 				if(c == 'g' || c == 'G') bandwidth *= 1000000000;
 				break;
 			}
-#if 0
-			case 'c':
-				packets_limit = atoi(optarg);
-				break;
-#endif
 			case 'd':
 				dumpfile = optarg;
 				break;
@@ -226,12 +218,11 @@ void get_options(int argc, char** argv){
 				local_port = get_range(optarg, NULL, NULL, 1, 65535);
 				break;
 			case 'P':
-				payload_display = 1;
+				print_payload = 1;
 				break;
 			case 's':
 				if(resolv_addr(optarg, &local_addr) < 0)
-					LOG_FATAL("Invalid argument for -s");
-				break;
+					DIE("Invalid argument for -s");
 			case 'T':
 				ttl = atoi(optarg);
 				break;
@@ -260,96 +251,106 @@ void get_options(int argc, char** argv){
 		} /* while */
 
 	if(optind >= argc)
-		LOG_FATAL("Destination not specified.");
+		DIE("Destination not specified.");
 
 	/* get local addr and port*/
 	if(!local_port)
 		local_port = rand()%65535+1;
-	LOG_INFO("source: %s:%d", inet_ntoa(local_addr), local_port);
+	MESSAGE("source: %s:%d", inet_ntoa(local_addr), local_port);
 
 	/* get destination addr and port */
-	if(get_addr(argv[optind++], &dst_addr, &dst_net) < 0
-	|| !dst_addr.s_addr)
-		LOG_FATAL("Invalid destination");
+	if(get_addr(argv[optind++], &dst_addr, &dst_net) < 0 || !dst_addr.s_addr)
+		DIE("Invalid destination");
 	dst_port = get_range(argv[optind++], NULL, NULL, 1, 65535);
-	LOG_INFO("dest: %s:%d", inet_ntoa(dst_addr), dst_port);
+	MESSAGE("dest: %s:%d", inet_ntoa(dst_addr), dst_port);
 
 	/* sanity check */
 	if(!finite(line_interval))
-		LOG_FATAL("Invalid value of -i.");
+		DIE("Invalid value of -i.");
 	if(!finite(net_timeout))
-		LOG_FATAL("Invalid value of -w.");
+		DIE("Invalid value of -w.");
 	if(print_ascii && print_hex)
-		LOG_FATAL("-A and -x can't be both set.");
+		DIE("-A and -x can't be both set.");
 
-	packets_buf = calloc(packets_limit, sizeof(packet*));
-	if(packets_buf == NULL)
-		LOG_FATAL("failed to allocate memory");
-	memset(packets_buf, 0, sizeof(packet*)*packets_limit);
+	return 0;
 }
 
-
-void autosave(){
-	LOG_DEBUG("cur:%d saved:%d", packets_cur, packets_saved);
-	size_t cur = packets_cur;
-	if(packets_saved + packets_limit - 10 < cur){
-		LOG_MESSAGE("packets #%d ~ #%d lost", packets_saved, cur - packets_limit + 9);
-		packets_saved = cur - packets_limit + 10;
-	}
-	savedump(dumpfile, packets_buf, packets_saved, cur - packets_saved);
-	packets_saved = cur;
+void* printpkt(void* _){
+	packet* p;
+	for(; packets; usleep(1000)){
+		p = g_async_queue_try_pop(packets);
+		if(p){
+			packet_print(p);
+			if(dumpfile)
+				dump_packet(p);
+			packet_free(p);
+		}else if(exiting)
+			return _;
+ 	}
+ 	return _;
 }
-
-
 void cleanup(){
-	LOG_DEBUG("main cleanup");
+	DEBUG("main cleanup");
+	exiting = 1;
 	net_cleanup();
+	if(printpkt_thrd)
+		g_thread_join(printpkt_thrd);
+	if(dumpfile)
+		dump_cleanup();
 
-#if __MINGW32__
-	if(wsaData.wVersion > 0)
-		WSACleanup();
-#endif
-
-	if(dumpfile && packets_cur)
-		autosave();
-
-	/* free everything */
-	size_t i;
-	for(i = 0; packets_cur && i < packets_cur; i++)
-		if(packets_buf[i])
-			packet_free(packets_buf[i]);
-	if(packets_buf)
-		free(packets_buf);
-	fflush(stdout);
+	if(packets)
+		g_async_queue_unref(packets);
 	fflush(stderr);
 }
-
 void inthandler(int sig){
 	(void)sig;
-	fprintf(stderr, "** exit on interrupt\n");
+	if(sig == SIGINT)
+		MESSAGE("** exit on interrupt");
 	exit(EXIT_SUCCESS);
 }
 
-void huphandler(int sig){
-	(void)sig;
-	autosave();
-}
-int main(int argc, char** argv){
+
+int init(int argc, char** argv){
+	DEBUG("main init");
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	srand(tv.tv_usec);
+	if(!g_thread_supported())
+		g_thread_init(NULL);
 
-#if __MINGW32__
-	if(WSAStartup(MAKEWORD(2,2), &wsaData))
-		LOG_FATAL("WSAStartup failed");
-#endif
+	if(get_options(argc, argv) < 0)
+		return -1;
+	if(dumpfile && dump_init(dumpfile) < 0)
+		return -1;
 
-	get_options(argc, argv);
-	net_init();
+	packets = g_async_queue_new();
+	if(packets == NULL){
+		ERROR("g_async_queue_new");
+		return -1;
+	}
 
-	atexit(cleanup);
-	signal(SIGINT, inthandler);
-	signal(SIGHUP, huphandler);
+	if(net_init() < 0)
+		return -1;
+
+	GError* err;
+	printpkt_thrd = g_thread_create(printpkt, NULL, 1, &err);
+	if(printpkt_thrd == NULL){
+		ERROR(err->message);
+		return -1;
+	}
+
+	if(atexit(cleanup))
+		return -1;
+	if(signal(SIGINT, inthandler) == SIG_ERR)
+		return -1;
+	if(signal(SIGTERM, inthandler) == SIG_ERR)
+		return -1;
+	return 0;
+}
+
+int main(int argc, char** argv){
+	if(init(argc, argv) < 0)
+		return EXIT_FAILURE;
 
 	if(!listen_only){
 		if(net_timeout < 0)
@@ -357,11 +358,7 @@ int main(int argc, char** argv){
 #define LINEBS 65535
 		char linebuf[LINEBS];
 
-#if 0
-		int flags = fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK;
-		TRY( fcntl(STDIN_FILENO, F_SETFL, flags) )
-#endif
-		for(;;){
+		for(;!exiting;){
 			if(fgets(linebuf, LINEBS, stdin)){
 				size_t eol = 0;
 				while(linebuf[eol] != '\n' && linebuf[eol] != '\r' && eol < LINEBS)
@@ -369,12 +366,12 @@ int main(int argc, char** argv){
 				usleep(line_interval*1e6);
 				interpret(linebuf, eol);
 			}else if(!feof(stdin)){
-				LOG_ERROR("fread");
-			}else usleep(1000000);
+				FATAL("fread");
+			}else usleep(1000);
 		}
 	}else{
 		for(;;)usleep(1);
 	}
 
-	return 0;
+	return EXIT_SUCCESS;
 }

@@ -14,14 +14,13 @@
 
 extern tcp_seq isn, ian;
 extern char* dumpfile;
-extern int verbose;
 extern struct in_addr dst_addr;
 extern struct timeval init_time;
 
 int print_ascii = 0;//-A
-int payload_display = 0;//-P
+int print_payload = 0;//-P
 int print_hex = 0;//-x
-int analysis = 0;//-a
+int print_analysis = 0;//-a
 
 #define PRINT(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #define PUT(c) fputc(c, stderr)
@@ -37,7 +36,6 @@ static void printhex(char* s, size_t n){
 }
 /*
 
-len should be > IPV4_H
 */
 packet* packet_new(void* p, size_t len, struct timeval* t){
 	struct ip* iph = p;
@@ -58,6 +56,8 @@ packet* packet_new(void* p, size_t len, struct timeval* t){
 
 	pkt->iph_len = iph->ip_hl << 2;
 	if(pkt->iph_len < IPV4_H)
+		WRONGSIZE(pkt->iph_len);
+	if(pkt->iph_len > pkt->len)
 		WRONGSIZE(pkt->iph_len);
 
 	pkt->hdr = memcpy(malloc(len), p, len);
@@ -117,7 +117,7 @@ void packet_free(void* i){
 
 static void appdata_print(char* p, size_t n){
 	size_t i;
-	for(i = 0; i < n && payload_display; i++){
+	for(i = 0; i < n && print_payload; i++){
 		if(isprint(p[i]))
 			PUT(p[i]);
 		else if(print_ascii)
@@ -131,7 +131,7 @@ static void appdata_print(char* p, size_t n){
 		else
 			PUT(p[i]);
 	}
-	if(payload_display && n)
+	if(print_payload && n)
 		PRINT("-- APPDATA EOF\n");
 }
 static void tcp_packet_print(packet* p){
@@ -203,7 +203,7 @@ static void tcp_packet_print(packet* p){
 			}
 			i += kind > 1 ? (u_int)p->tcpopts[i+1] : 1;
 	}
-	if(analysis){
+	if(print_analysis){
 		if(ntohs(t->th_win) % 17 == 0 
 		&& ntohs(p->hdr->ip_id) == 64
 		&& !(ntohs(p->hdr->ip_off) & IP_DF))

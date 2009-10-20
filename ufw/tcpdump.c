@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/types.h>
+#include <glib.h>
+
 #include "net_config.h"
 #include "packet.h"
 #include "tcpdump.h"
@@ -8,77 +10,96 @@
 
 #define TCPDUMP_MAGIC 0xa1b2c3d4
 #define DLT_NULL 0
-extern size_t packets_limit;
+#define BUFSIZE 65536
 
-void savedump(char* file, packet** buf, size_t start, size_t n){
-	if(!file || !buf || !n)
-		return;
-	LOG_DEBUG("start:%d n:%d", start, n);
-	struct {
-		u_long magic_number;
-		u_short version_major;
-		u_short version_minor;
-		long thiszone;
-		u_long sigfigs;
-		u_long snaplen;
-		u_long network;
-	} pcap_hdr = {TCPDUMP_MAGIC, 2, 4, 0, 0, IP_MAXPACKET, DLT_NULL}, fhdr;
-	int has_hdr = 0;
-	FILE* f;
-	if(!strcmp(file, "-")){
-		f = stdout;
-		setbuf(stdout, NULL);
+static FILE* dmp;
+static char dmpbuf[BUFSIZE];
+
+typedef struct {
+	u_long magic_number;
+	u_short version_major;
+	u_short version_minor;
+	long thiszone;
+	u_long sigfigs;
+	u_long snaplen;
+	u_long network;
+} pcaphdr;
+
+typedef struct {
+	u_long ts_sec;
+	u_long ts_usec;
+	u_long incl_len;
+	u_long orig_len;
+} pcaprec_hdr;
+
+
+int dump_init(char* dumpfile){
+	if(!dumpfile || dmp){
+		DEBUG("null filename or double init");
+		return -1;
+	}
+	if(!strcmp(dumpfile, "-")){
+		dmp = stdout;
+		setbuf(dmp, NULL);
 	}else{
-		f = fopen(file, "a+b");
-		if(f == NULL){
-			LOG_MESSAGE("failed to open %s", file);
-			return;
+		dmp = fopen(dumpfile, "w");
+		if(dmp == NULL){
+			ERROR("fopen");
+			return -1;
 		}
-		if(fread(&fhdr, sizeof(fhdr), 1, f) == 1 
-		&& fhdr.magic_number == TCPDUMP_MAGIC)
-				has_hdr = 1;
-		if(!has_hdr){
-				f = freopen(file, "wb", f);
-				if(f == NULL){
-					LOG_MESSAGE("failed to open %s", file);
-					return;
-				}
-		}
+		setbuf(dmp, dmpbuf);
 	}
-	if(!has_hdr && fwrite(&pcap_hdr, sizeof(pcap_hdr), 1, f) != 1){
-		LOG_MESSAGE("error when writing header");
-		return;
+	pcaphdr h = {TCPDUMP_MAGIC, 2, 4, 0, 0, IP_MAXPACKET, DLT_NULL};
+	if(fwrite(&h, sizeof(pcaphdr), 1, dmp) != 1){
+		ERROR("fwrite");
+		if(dmp != stdout)
+			fclose(dmp);
+		return -1;
 	}
-	size_t i;
-	size_t pos;
-	for(i = 0; i < n; i++){
-		pos = (start + i)%packets_limit;
-		struct {
-			u_long ts_sec;
-			u_long ts_usec;
-			u_long incl_len;
-			u_long orig_len;
-		}pcaprec_hdr;
-		u_long nullhdr = PF_INET;
-		size_t nullhdr_s = 4;
-		pcaprec_hdr.ts_sec = buf[pos]->time.tv_sec;
-		pcaprec_hdr.ts_usec = buf[pos]->time.tv_usec;
-		pcaprec_hdr.incl_len = buf[pos]->len + nullhdr_s;
-		pcaprec_hdr.orig_len = buf[pos]->len + nullhdr_s;
-		if(fwrite(&pcaprec_hdr, sizeof(pcaprec_hdr), 1, f) != 1
-		|| fwrite(&nullhdr, nullhdr_s, 1, f) != 1
-		|| fwrite(buf[pos]->hdr, buf[pos]->len, 1, f) != 1){
-			LOG_MESSAGE("write error");
-			fclose(f);
-			return;
-		}
-		buf[pos] = NULL;
-	}
-	fclose(f);
+	return 0;
 }
+#if 0
+void dump_save(){
+	if(!packets)
+		return;
+	if(g_async_queue_length(packets) < 0)
+		return;
 
-packet* loaddump(char* file){
-	(void)file;
-	fprintf(stderr, "** loaddump() not implemented.\n");
-	return NULL;
+	packet* p;
+	while((p = g_async_queue_try_pop(packets))){
+		pcaprec_hdr rh;
+		u_long nullhdr = PF_INET;
+		rh.ts_sec = p->time.tv_sec;
+		rh.ts_usec = p->time.tv_usec;
+		rh.incl_len = p->len + sizeof(nullhdr);
+		rh.orig_len = p->len + sizeof(nullhdr);
+		if(fwrite(&rh, sizeof(rh), 1, f) != 1
+		|| fwrite(&nullhdr, sizeof(nullhdr), 1, f) != 1
+		|| fwrite(p->hdr, p->len, 1, f) != 1){
+			ERROR("fwrite");
+		}
+		packet_free(p);
+	}
+}
+#endif
+void dump_packet(packet* p){
+	if(!p || !dmp)return;
+	pcaprec_hdr rh;
+	u_long nullhdr = PF_INET;
+	rh.ts_sec = p->time.tv_sec;
+	rh.ts_usec = p->time.tv_usec;
+	rh.incl_len = p->len + sizeof(nullhdr);
+	rh.orig_len = p->len + sizeof(nullhdr);
+	if(fwrite(&rh, sizeof(rh), 1, dmp) != 1
+	|| fwrite(&nullhdr, sizeof(nullhdr), 1, dmp) != 1
+	|| fwrite(p->hdr, p->len, 1, dmp) != 1){
+		ERROR("fwrite");
+	}
+}
+void dump_cleanup(){
+	if(!dmp)
+		return;
+	fflush(dmp);
+	fclose(dmp);
+	dmp = NULL;
 }

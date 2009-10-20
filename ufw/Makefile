@@ -1,13 +1,7 @@
-TARGET = LINUX
 CC = gcc
-ifeq ($(TARGET), LINUX)
-LIBS = -lm -lpthread
-endif
-ifeq ($(TARGET), MINGW32)
-LIBS = -lws2_32 -liphlpapi
-endif
-INCLUDES = 
-CFLAGS = -Wall -W -Wextra -O3
+LIBS = -lm `pkg-config --libs glib-2.0` `pkg-config --libs gthread-2.0`
+INCLUDES = `pkg-config --cflags glib-2.0` `pkg-config --cflags gthread-2.0`
+CFLAGS = -Wall -W -Wextra -O3 $(DEFINES)
 
 OBJS = packet.o net.o parse.o tcpdump.o cksum.o
 
@@ -28,6 +22,7 @@ parse.to: parse.c
 .PHONY: clean
 
 install:
+	strip ufw
 	cp -p ufw /usr/sbin/ufw
 	setcap cap_net_admin,cap_net_raw+ei /usr/sbin/ufw
 
@@ -35,7 +30,7 @@ uninstall:
 	rm /usr/sbin/ufw
 
 clean: 
-	rm -f *.o *.to ufw parse-test ufw.exe
+	rm -f *.o *.to ufw parse-test
 
 cap:
 	setcap cap_net_admin,cap_net_raw+ei ufw
