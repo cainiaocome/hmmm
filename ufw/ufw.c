@@ -359,14 +359,12 @@ int main(int argc, char** argv){
 		char linebuf[LINEBS];
 
 		for(;!exiting;){
-			if(fgets(linebuf, LINEBS, stdin)){
+			if(!feof(stdin) && fgets(linebuf, LINEBS, stdin)){
 				size_t eol = 0;
 				while(linebuf[eol] != '\n' && linebuf[eol] != '\r' && eol < LINEBS)
 					eol++;
 				usleep(line_interval*1e6);
 				interpret(linebuf, eol);
-			}else if(!feof(stdin)){
-				FATAL("fread");
 			}else usleep(1000);
 		}
 	}else{
