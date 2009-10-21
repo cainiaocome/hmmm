@@ -5,10 +5,11 @@ s
 r,[1,0
 
 #send an ack with bad seq
-a,[1
+#a,[1
 
 # wait for an syn/ack and an rst, send ack
-@@;a
+#@@;a
+@;a
 
 # send http request
 pa;GET /search?q=falun HTTP/1.1\r\nHost: www.google.com\r\n\r\n

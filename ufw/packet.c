@@ -13,7 +13,6 @@
 #define UDP_H 8
 
 extern tcp_seq isn, ian;
-extern char* dumpfile;
 extern struct in_addr dst_addr;
 extern struct timeval init_time;
 

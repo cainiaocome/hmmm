@@ -1,7 +1,7 @@
 CC = gcc
 LIBS = -lm `pkg-config --libs glib-2.0` `pkg-config --libs gthread-2.0`
 INCLUDES = `pkg-config --cflags glib-2.0` `pkg-config --cflags gthread-2.0`
-CFLAGS = -Wall -W -Wextra -O3 $(DEFINES)
+CFLAGS = -Wall -W -Wextra -g $(DEFINES)
 
 OBJS = packet.o net.o parse.o tcpdump.o cksum.o
 
@@ -9,6 +9,9 @@ all: ufw
 
 ufw: ufw.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $< $(OBJS) $(LIBS)
+
+analysis: analysis.o packet.o tcpdump.o
+	$(CC) $(CFLAGS) -o $@ $< packet.o tcpdump.o $(LIBS)
 
 parse-test: parse.to parse_test.o
 	$(CC) $(CFLAGS) $(LIBS) -o $@ parse.to parse_test.o $(LIBS)

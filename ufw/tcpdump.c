@@ -10,6 +10,7 @@
 
 #define TCPDUMP_MAGIC 0xa1b2c3d4
 #define DLT_NULL 0
+#define DLT_EN10MB 1
 #define BUFSIZE 65536
 
 static FILE* dmp;
@@ -33,6 +34,65 @@ typedef struct {
 } pcaprec_hdr;
 
 
+GQueue* dump_load(char* dumpfile){
+	FILE* dmp;
+	if(!dumpfile || !strcmp(dumpfile, "-")){
+		dmp = stdin;
+	}else{
+		dmp = fopen(dumpfile, "r");
+		if(dmp == NULL){
+			ERROR("fopen");
+			return NULL;
+		}
+	}
+	pcaphdr h;
+	if(fread(&h, sizeof(pcaphdr), 1, dmp) != 1){
+		ERROR("read header");
+		if(dmp != stdin)
+			fclose(dmp);
+		return NULL;
+	}
+	if(h.magic_number != TCPDUMP_MAGIC){
+		ERR("not a pcap file");
+		if(dmp != stdin)
+			fclose(dmp);
+		return NULL;
+	}
+	if(h.network != DLT_NULL
+	&& h.network != DLT_EN10MB){
+		ERR("unsupported link type");
+		if(dmp != stdin)
+			fclose(dmp);
+		return NULL;
+	}
+	GQueue* packets = g_queue_new();
+	pcaprec_hdr rh;
+	char linkhdr[14];
+	int linkhdr_s;
+	char* buf = malloc(h.snaplen);
+	if(h.network == DLT_NULL)
+		linkhdr_s = 4;
+	if(h.network == DLT_EN10MB)
+		linkhdr_s = 14;
+	while(!feof(dmp)){
+		if(fread(&rh, sizeof(rh), 1, dmp) != 1
+		|| rh.incl_len > rh.orig_len
+		|| rh.incl_len > h.snaplen
+		|| fread(linkhdr, sizeof(linkhdr_s), 1, dmp) != 1
+		|| fread(buf, rh.incl_len - linkhdr_s, 1, dmp) != 1){
+			if(!feof(dmp))ERR("packet broken");
+			break;
+		}
+		struct timeval captime;
+		captime.tv_sec = rh.ts_sec;
+		captime.tv_usec = rh.ts_usec;
+		packet* p = packet_new(buf, rh.incl_len - linkhdr_s, &captime);
+		g_queue_push_tail(packets, p);
+	}
+	if(dmp != stdin)fclose(dmp);
+	free(buf);
+	return packets;
+}
 int dump_init(char* dumpfile){
 	if(!dumpfile || dmp){
 		DEBUG("null filename or double init");
@@ -103,3 +163,4 @@ void dump_cleanup(){
 	fclose(dmp);
 	dmp = NULL;
 }
+
