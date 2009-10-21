@@ -33,7 +33,7 @@ uninstall:
 	rm /usr/sbin/ufw
 
 clean: 
-	rm -f *.o *.to ufw parse-test
+	rm -f *.o *.to ufw parse-test analysis
 
 cap:
 	setcap cap_net_admin,cap_net_raw+ei ufw
