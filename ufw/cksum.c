@@ -1,19 +1,23 @@
-#include "net_config.h"
+#include <sys/types.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
+#include <netinet/ip_icmp.h>
 
 #define CKSUM_CARRY(x) \
 (x = (x >> 16) + (x & 0xffff), (~(x + (x >> 16)) & 0xffff))
 
-static int in_cksum(u_short *addr, int len){
+static int in_cksum(u_int16_t *addr, int len){
 	int sum;
 #if 0
-	u_short last_byte;
+	u_int16_t last_byte;
 
 	sum = 0;
 	last_byte = 0;
 #else
 	union {
-		u_short s;
-		u_char b[2];
+		u_int16_t s;
+		u_int8_t b[2];
 	}pad;
 
 	sum = 0;
@@ -25,11 +29,11 @@ static int in_cksum(u_short *addr, int len){
 	}
 #if 0
 	if(len == 1){
-		*(u_char *)&last_byte = *(u_char *)addr;
+		*(u_int8_t *)&last_byte = *(u_int8_t *)addr;
 		sum += last_byte;
 #else
 	if(len == 1){
-		pad.b[0] = *(u_char *)addr;
+		pad.b[0] = *(u_int8_t *)addr;
 		pad.b[1] = 0;
 		sum += pad.s;
 #endif
@@ -39,47 +43,39 @@ static int in_cksum(u_short *addr, int len){
 }
 
 /* modified from libnet_do_checksum() from libnet_checksum.c */
-int do_checksum(char* buf, int proto, int len){
-	struct ip* iph = (struct ip*)buf;
+void do_checksum(int proto, void *buf, int len){
+	struct iphdr *ip = (struct iphdr *)buf;
 	int sum = 0;
-	int ip_hl = iph->ip_hl << 2;
+	int ip_hl = ip->ihl << 2;
 
 	if (len == 0)
-		return -1;
+		return;
 
 	switch (proto){
 		case IPPROTO_TCP: {
-			struct tcphdr *tcph =	(struct tcphdr *)(buf + ip_hl);
-			tcph->th_sum = 0;
-			sum = in_cksum((u_short *)&iph->ip_src, 8);
+			struct tcphdr *tcp = (struct tcphdr *)(buf + ip_hl);
+			tcp->check = 0;
+			sum = in_cksum((u_int16_t *)&ip->saddr, 8);
 			sum += ntohs(IPPROTO_TCP + len);
-			sum += in_cksum((u_short *)tcph, len);
-			tcph->th_sum = CKSUM_CARRY(sum);
+			sum += in_cksum((u_int16_t *)tcp, len);
+			tcp->check = CKSUM_CARRY(sum);
 			break;
 		}
 		case IPPROTO_UDP: {
-			struct udphdr *udph =	(struct udphdr *)(buf + ip_hl);
-			udph->uh_sum = 0;
-			sum = in_cksum((u_short *)&iph->ip_src, 8);
+			struct udphdr *udp = (struct udphdr *)(buf + ip_hl);
+			udp->check = 0;
+			sum = in_cksum((u_int16_t *)&ip->saddr, 8);
 			sum += ntohs(IPPROTO_UDP + len);
-			sum += in_cksum((u_short *)udph, len);
-			udph->uh_sum = CKSUM_CARRY(sum);
+			sum += in_cksum((u_int16_t *)udp, len);
+			udp->check = CKSUM_CARRY(sum);
 			break;
 		}
 		case IPPROTO_ICMP: {
-			struct icmphdr *icmph =	(struct icmphdr *)(buf + ip_hl);
-			icmph->checksum = 0;
-			sum += in_cksum((u_short *)icmph, len);
-			icmph->checksum = CKSUM_CARRY(sum);
-			break;
-		}
-		case IPPROTO_IGMP: {
-			struct igmp *igmph = (struct igmp *)(buf + ip_hl);
-			igmph->igmp_cksum = 0;
-			sum = in_cksum((u_short *)igmph, len);
-			igmph->igmp_cksum = CKSUM_CARRY(sum);
+			struct icmphdr *icmp =	(struct icmphdr *)(buf + ip_hl);
+			icmp->checksum = 0;
+			sum += in_cksum((u_int16_t *)icmp, len);
+			icmp->checksum = CKSUM_CARRY(sum);
 			break;
 		}
 	}
-	return 0;
 }

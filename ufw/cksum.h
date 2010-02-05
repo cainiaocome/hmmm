@@ -1,7 +1,7 @@
 #ifndef _UFW_CKSUM_H
 #define _UFW_CKSUM_H
 
-int do_checksum(char* buf, int proto, int len);
+void do_checksum(int proto, char* buf, int len);
 
 #endif /* _UFW_CKSUM_H */
 

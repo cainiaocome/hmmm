@@ -17,20 +17,20 @@ static FILE* dmp;
 static char dmpbuf[BUFSIZE];
 
 typedef struct {
-	u_long magic_number;
-	u_short version_major;
-	u_short version_minor;
+	u_int32_t magic_number;
+	u_int16_t version_major;
+	u_int16_t version_minor;
 	long thiszone;
-	u_long sigfigs;
-	u_long snaplen;
-	u_long network;
+	u_int32_t sigfigs;
+	u_int32_t snaplen;
+	u_int32_t network;
 } pcaphdr;
 
 typedef struct {
-	u_long ts_sec;
-	u_long ts_usec;
-	u_long incl_len;
-	u_long orig_len;
+	u_int32_t ts_sec;
+	u_int32_t ts_usec;
+	u_int32_t incl_len;
+	u_int32_t orig_len;
 } pcaprec_hdr;
 
 

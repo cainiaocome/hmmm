@@ -150,7 +150,6 @@ int net_init(){
 
 	/*XXX CAP_NET_RAW  */
 	TRY( sock = socket(PF_INET, SOCK_RAW, proto) );
-	DEBUG("sock set up.");
 	socklen_t optlen;
 
 	/* no linger */
@@ -158,18 +157,8 @@ int net_init(){
 	TRY( setsockopt(sock, SOL_SOCKET, SO_LINGER, (char*)&lg, sizeof(lg)) );
 	int on = 1;
 
-	/* high socket priority
-	XXX CAP_NET_ADMIN 
-	*/
-	int sockpri = 1000;
-	TRY( setsockopt(sock, SOL_SOCKET, SO_PRIORITY, (char*)&sockpri, sizeof(sockpri)) );
-
 	/* recv timestamp */
 	TRY( setsockopt(sock, SOL_SOCKET, SO_TIMESTAMP, (char*)&on, sizeof(on)) );
-
-	/* set recv timeout: 1 usec */
-	struct timeval rto = {0, 10};
-	TRY( setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&rto, sizeof(rto)) );
 
 	/* customize ip hdr */
 	TRY( setsockopt(sock, IPPROTO_IP, IP_HDRINCL, (char*)&on, sizeof(on)) );
