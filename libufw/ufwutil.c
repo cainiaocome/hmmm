@@ -242,6 +242,10 @@ int ufw_connect(ufw_sk *sk, u_int32_t daddr, u_int16_t dport){
 		return -1;
 	}
 
+	if(htonl(daddr) == sk->daddr){
+		sk->dport = htons(dport);
+		return 0;
+	}
 	sk->daddr = htonl(daddr);
 	sk->dport = htons(dport);
 	addr.sin_family = AF_INET;
