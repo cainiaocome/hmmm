@@ -493,11 +493,15 @@ static int ufw_send(ufw_sk *sk){
 	&& 1./sk->limit_packet > delay)
 		delay = 1./sk->limit_packet;
 
-	if(last.tv_sec)
+	gettimeofday(&time, NULL);
+	fprintf(stderr, "%.6f %.6f\n", delay, time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6);
+	if(last.tv_sec){
 		delay -= time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6;
+		if(delay > 0)
+			dsleep(delay);
+	}
+	gettimeofday(&last, NULL);
 
-	if(delay > 0)
-		dsleep(delay);
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = sk->proto;
@@ -505,8 +509,6 @@ static int ufw_send(ufw_sk *sk){
 	r = sendto(sk->fd, sk->buf, len, 0, (struct sockaddr *)&addr, sizeof(addr));
 
 	gettimeofday(&time, NULL);
-
-	last = time;
 
 	if(!sk->first_packet.tv_sec)
 		sk->first_packet = time;
