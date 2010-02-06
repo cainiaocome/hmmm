@@ -487,6 +487,7 @@ static int ufw_send(ufw_sk *sk){
 	gettimeofday(&time, NULL);
 
 	if(!first){
+		delay = 0;
 		if(sk->limit_byte > 0)
 			delay = (double)len/sk->limit_byte;
 
@@ -496,7 +497,8 @@ static int ufw_send(ufw_sk *sk){
 		&& 1./sk->limit_packet > delay)
 			delay = 1./sk->limit_packet;
 
-		if(delay > time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6)
+		delay -= time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6;
+		if(delay > 0)
 			dsleep(delay);
 	}
 	first = 0;

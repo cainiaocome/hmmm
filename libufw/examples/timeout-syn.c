@@ -52,7 +52,8 @@ int main(){
 	int pos;
 	char falun[] = "GET /falun HTTP/1.1\r\nHost: \r\n\r\n";
 
-	snprintf(dest_str, 20, "64.233.172.%d", time(NULL)/60%256);
+	srand(time(NULL));
+	snprintf(dest_str, 20, "64.233.172.%d", (int)time(NULL)/60%256);
 	u_int32_t dest = ufw_atoh(dest_str);//64.233.172.0
 
 	base_port = 50000;
