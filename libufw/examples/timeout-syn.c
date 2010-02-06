@@ -52,14 +52,14 @@ int main(){
 	int pos;
 	char falun[] = "GET /falun HTTP/1.1\r\nHost: \r\n\r\n";
 
-	snprintf(dest_str, 20, "64.233.172.%d", 5);
+	snprintf(dest_str, 20, "64.233.172.%d", time(NULL)/60%256);
 	u_int32_t dest = ufw_atoh(dest_str);//64.233.172.0
 
 	base_port = 50000;
 
 	sk = ufw_socket(TCP, PRINT_ALL|FATAL|FILTER_ADDR);
 
-	ufw_set_limit_packet(sk, 100, SYN);
+	ufw_set_limit_packet(sk, 1000, SYN);
 	ufw_inserthook(sk, HOOK_RECV, recvhook, NULL);
 	ufw_inserthook(sk, HOOK_SEND, sendhook, NULL);
 
@@ -80,7 +80,7 @@ int main(){
 	ufw_close(sk);
 
 	for(pos = 0; pos < 500; pos++){
-		if(data[pos].A.tv_sec == 0)continue;
+		if(data[pos].PA.tv_sec == 0)continue;
 		printf("%d.%06d %.6f %.6f", 
 			(int)data[pos].A.tv_sec, (int)data[pos].A.tv_usec,
 			elapse(data[pos].S, data[pos].A), elapse(data[pos].S, data[pos].PA));
