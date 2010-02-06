@@ -10,6 +10,9 @@ tcp-syn: tcp-syn.o
 tcp-rstflood: tcp-rstflood.o
 	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
 
+timeout-syn: timeout-syn.o
+	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
+
 .c.o:
 	$(CC) $(CFLAGS) -c $<
 
