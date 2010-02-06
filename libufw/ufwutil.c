@@ -494,7 +494,6 @@ static int ufw_send(ufw_sk *sk){
 		delay = 1./sk->limit_packet;
 
 	gettimeofday(&time, NULL);
-	fprintf(stderr, "%.6f %.6f\n", delay, time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6);
 	if(last.tv_sec){
 		delay -= time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6;
 		if(delay > 0)
