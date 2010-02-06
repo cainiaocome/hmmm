@@ -473,8 +473,7 @@ static int ufw_send(ufw_sk *sk){
 	struct sockaddr_in addr;
 	double delay;
 	int r;
-	static int first = 1;
-	static struct timeval last;
+	static struct timeval last = {0, 0};
 	size_t len;
 
 	if(!sk){
@@ -483,33 +482,30 @@ static int ufw_send(ufw_sk *sk){
 	}
 
 	ip = (struct iphdr *)sk->buf;
+	len = ntohs(ip->tot_len);
 	delay = 0;
 
+	if(sk->limit_byte > 0)
+		delay = (double)len/sk->limit_byte;
+	if(sk->limit_packet > 0 
+	&& (ip->protocol == IPPROTO_UDP 
+		|| (sk->limit_packet_flags & sk->buf[(ip->ihl << 2) + 13]))
+	&& 1./sk->limit_packet > delay)
+		delay = 1./sk->limit_packet;
+
+	if(last.tv_sec)
+		delay -= time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6;
+
+	if(delay > 0)
+		dsleep(delay);
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = sk->proto;
 	addr.sin_addr.s_addr = sk->daddr;
-	len = ntohs(ip->tot_len);
 	r = sendto(sk->fd, sk->buf, len, 0, (struct sockaddr *)&addr, sizeof(addr));
 
 	gettimeofday(&time, NULL);
 
-	if(!first){
-		delay = 0;
-		if(sk->limit_byte > 0)
-			delay = (double)len/sk->limit_byte;
-
-		if(sk->limit_packet > 0 
-		&& (ip->protocol == IPPROTO_UDP 
-			|| (sk->limit_packet_flags & sk->buf[(ip->ihl << 2) + 13]))
-		&& 1./sk->limit_packet > delay)
-			delay = 1./sk->limit_packet;
-
-		delay -= time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6;
-		if(delay > 0)
-			dsleep(delay);
-	}
-	first = 0;
 	last = time;
 
 	if(!sk->first_packet.tv_sec)
