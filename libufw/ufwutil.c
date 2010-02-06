@@ -285,13 +285,14 @@ int ufw_set_source(ufw_sk *sk, u_int32_t saddr, u_int16_t sport){
 		return -1;
 	}
 
+/* XXX bug here
 	addr.sin_family = AF_UNSPEC;
 	s = connect(sk->fd, (struct sockaddr *)&addr, sizeof(addr));
 	if(s < 0){
 		if(sk->opts & FATAL)die("connect");
 		return -1;
 	}
-
+*/
 	if(saddr)
 		sk->saddr = htonl(saddr);
 	sk->sport = htons(sport);
