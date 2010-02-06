@@ -1,5 +1,5 @@
 CC = cc
-CFLAGS = -I.. -lufwutil -Wall -Wextra -O3 -g
+CFLAGS = -I.. -lufwutil -Wall -Wextra -g
 LIBS = -L.. -lufwutil
 
 all: tcp-syn tcp-rstflood

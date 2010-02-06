@@ -152,6 +152,7 @@ int ufw_send_udp(ufw_sk *, const void *payload, int payload_size);
 u_int32_t ufw_atoh(const char *ip);
 
 int ufw_pause(ufw_sk *);
+int ufw_sleep(ufw_sk *sk, unsigned int seconds);
 
 void dsleep(double seconds);
 

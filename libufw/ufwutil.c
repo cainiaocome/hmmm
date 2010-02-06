@@ -292,7 +292,8 @@ int ufw_set_source(ufw_sk *sk, u_int32_t saddr, u_int16_t sport){
 		return -1;
 	}
 
-	sk->saddr = htonl(saddr);
+	if(saddr)
+		sk->saddr = htonl(saddr);
 	sk->sport = htons(sport);
 	return 0;
 }
@@ -464,6 +465,9 @@ static int ufw_send(ufw_sk *sk){
 	struct sockaddr_in addr;
 	double delay;
 	int r;
+	static int first = 1;
+	static struct timeval last;
+	size_t len;
 
 	if(!sk){
 		errno = EBADF;
@@ -473,22 +477,31 @@ static int ufw_send(ufw_sk *sk){
 	ip = (struct iphdr *)sk->buf;
 	delay = 0;
 
-	if(sk->limit_byte > 0)
-		delay = (double)ntohs(ip->tot_len)/sk->limit_byte;
-
-	if(sk->limit_packet > 0 
-	&& (ip->protocol == IPPROTO_UDP || (sk->limit_packet_flags & sk->buf[(ip->ihl << 2) + 13]))
-	&& 1./sk->limit_packet > delay)
-		delay = 1./sk->limit_packet;
-
-	if(delay > 0)
-		dsleep(delay);
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = sk->proto;
 	addr.sin_addr.s_addr = sk->daddr;
-	r = sendto(sk->fd, sk->buf, ntohs(ip->tot_len), 0, (struct sockaddr *)&addr, sizeof(addr));
+	len = ntohs(ip->tot_len);
+	r = sendto(sk->fd, sk->buf, len, 0, (struct sockaddr *)&addr, sizeof(addr));
+
 	gettimeofday(&time, NULL);
+
+	if(!first){
+		if(sk->limit_byte > 0)
+			delay = (double)len/sk->limit_byte;
+
+		if(sk->limit_packet > 0 
+		&& (ip->protocol == IPPROTO_UDP 
+			|| (sk->limit_packet_flags & sk->buf[(ip->ihl << 2) + 13]))
+		&& 1./sk->limit_packet > delay)
+			delay = 1./sk->limit_packet;
+
+		if(delay > time.tv_sec - last.tv_sec + (time.tv_usec - last.tv_usec)/1e6)
+			dsleep(delay);
+	}
+	first = 0;
+	last = time;
+
 	if(!sk->first_packet.tv_sec)
 		sk->first_packet = time;
 	if(r < 0){
@@ -511,7 +524,7 @@ static int ufw_send(ufw_sk *sk){
 
 	if(sk->opts & PRINT_SEND)
 		print_packet(sk->buf, &time, 1);
-		
+
 	return r;
 }
 
@@ -575,7 +588,7 @@ static inline int ufw_recv(ufw_sk *sk){
 		if(!sk->first_packet.tv_sec)
 			sk->first_packet = time;
 
-		for(cur = sk->sendhook; cur; cur = cur->next){
+		for(cur = sk->recvhook; cur; cur = cur->next){
 			hki = cur->data;
 			if(!hki->func(sk->buf, &time, 1, hki->user))
 				goto next;
@@ -588,7 +601,7 @@ static inline int ufw_recv(ufw_sk *sk){
 		time.tv_usec -= sk->first_packet.tv_usec;
 		if(time.tv_usec < 0)time.tv_usec += 1000000;
 
-		if(sk->opts & PRINT_SEND)
+		if(sk->opts & PRINT_RECV)
 			print_packet(sk->buf, &time, 0);
 	}
 
@@ -662,6 +675,26 @@ int ufw_pause(ufw_sk *sk){
 	for(sk->received = 0; !sk->received; pause());
 
 	return 0;
+}
+
+int ufw_sleep(ufw_sk *sk, unsigned int seconds){
+	struct timespec r;
+	int ret;
+	if(!sk){
+		errno = EBADF;
+		return -1;
+	}
+
+	r.tv_sec = seconds;
+	r.tv_nsec = 0;
+
+	for(sk->received = 0; !sk->received; ){
+		ret = nanosleep(&r, &r);
+		if(ret == 0)
+			break;
+	}
+
+	return ret;
 }
 
 int ufw_bindtodev(ufw_sk *sk, const char *name){

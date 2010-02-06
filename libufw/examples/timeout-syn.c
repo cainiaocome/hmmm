@@ -16,29 +16,31 @@ int sendhook(void *buf, const struct timeval *time, int dir, void *_){
 	struct iphdr *ip = buf;
 	struct tcphdr *tcp = buf + (ip->ihl << 2);
 	int i = ntohs(tcp->dest) - base_port;
-	
+
 	if(tcp->syn)
 		data[i].S = *time;
 	else if(tcp->ack && !tcp->psh)
 		data[i].A = *time;
 	else if(tcp->ack && tcp->psh)
 		data[i].PA = *time;
-	return 0;
+	return 1;
 }
 int recvhook(void *buf, const struct timeval *time, int dir, void *_){
 	(void)_; (void)dir;
 	struct iphdr *ip = buf;
 	struct tcphdr *tcp = buf + (ip->ihl << 2);
-	int i = ntohs(tcp->dest) - base_port;
+	int i = ntohs(tcp->source) - base_port;
 
 	lastrecv = time->tv_sec;
 	if(tcp->rst && tcp->ack){
 		if(data[i].RA.tv_sec == 0)
 			data[i].RA = *time;
 		data[i].RAnum++;
-	}else if(tcp->rst)
+	}else if(tcp->rst){
 		data[i].R = *time;
-	return 0;
+		data[i].Rnum++;
+	}
+	return 1;
 }
 
 inline double elapse(struct timeval a, struct timeval b){
@@ -50,20 +52,24 @@ int main(){
 	int pos;
 	char falun[] = "GET /falun HTTP/1.1\r\nHost: \r\n\r\n";
 
-	snprintf(dest_str, 20, "64.233.172.%d", 0);
+	snprintf(dest_str, 20, "64.233.172.%d", 5);
 	u_int32_t dest = ufw_atoh(dest_str);//64.233.172.0
 
-	base_port = 1;
+	base_port = 50000;
 
 	sk = ufw_socket(TCP, PRINT_ALL|FATAL|FILTER_ADDR);
 
+	ufw_set_limit_packet(sk, 100, SYN);
+	ufw_inserthook(sk, HOOK_RECV, recvhook, NULL);
+	ufw_inserthook(sk, HOOK_SEND, sendhook, NULL);
+
 	for(pos = 0; pos < 500; pos++){
 		ufw_connect(sk, dest, base_port + pos);
-		ufw_send_tcp(sk, SYN, 100, 0, 0, 0);
+		ufw_send_tcp(sk, SYN, 100, 0, NULL, 0);
 	}
 
 	for(pos = 0; pos < 500; pos++){
-		if(time(NULL) - lastrecv > 10)
+		if(lastrecv && time(NULL) - lastrecv > 10)
 			break;
 		ufw_connect(sk, dest, base_port + pos);
 		ufw_send_tcp(sk, ACK, 101, 201, 0, 0);
@@ -75,11 +81,18 @@ int main(){
 
 	for(pos = 0; pos < 500; pos++){
 		if(data[pos].A.tv_sec == 0)continue;
-		printf("%d.%06d %.6f %.6f %.6f %.6f %d %d\n", 
+		printf("%d.%06d %.6f %.6f", 
 			(int)data[pos].A.tv_sec, (int)data[pos].A.tv_usec,
-			elapse(data[pos].S, data[pos].A), elapse(data[pos].S, data[pos].PA),
-			elapse(data[pos].S, data[pos].R), elapse(data[pos].S, data[pos].RA),
-			data[pos].Rnum, data[pos].RAnum);
+			elapse(data[pos].S, data[pos].A), elapse(data[pos].S, data[pos].PA));
+		if(data[pos].R.tv_sec)
+			printf(" %.6f", elapse(data[pos].S, data[pos].R));
+		else
+			printf(" ?");
+		if(data[pos].RA.tv_sec)
+			printf(" %.6f", elapse(data[pos].S, data[pos].RA));
+		else
+			printf(" ?");
+		printf(" %d %d\n", data[pos].Rnum, data[pos].RAnum);
 	}
 
 	return 0;

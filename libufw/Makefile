@@ -1,7 +1,7 @@
 CC = cc
 INCLUDES = -I.
 LIBS = -L.
-CFLAGS = -Wall -Wextra -O3 -g
+CFLAGS = -Wall -Wextra -g
 
 all: libufwutil.a
 
