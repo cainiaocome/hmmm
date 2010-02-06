@@ -282,6 +282,7 @@ int ufw_set_sport(ufw_sk *sk, u_int16_t port){
 		return -1;
 	}
 	sk->sport = htons(port);
+	return 0;
 }
 
 int ufw_set_dport(ufw_sk *sk, u_int16_t port){
@@ -290,12 +291,10 @@ int ufw_set_dport(ufw_sk *sk, u_int16_t port){
 		return -1;
 	}
 	sk->dport = htons(port);
+	return 0;
 }
 
 int ufw_set_source(ufw_sk *sk, u_int32_t saddr, u_int16_t sport){
-	int s;
-	struct sockaddr_in addr;
-
 	if(!sk){
 		errno = EBADF;
 		return -1;
