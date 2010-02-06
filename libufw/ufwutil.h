@@ -124,6 +124,8 @@ int ufw_removehook(ufw_sk *, int whence, ufw_hook hk);
 
 int ufw_connect(ufw_sk *, u_int32_t addr, u_int16_t port);
 int ufw_set_source(ufw_sk *, u_int32_t addr, u_int16_t port);
+int ufw_set_sport(ufw_sk *sk, u_int16_t port);
+int ufw_set_dport(ufw_sk *sk, u_int16_t port);
 
 int ufw_bindtodev(ufw_sk *sk, const char *name);
 int ufw_set_dumpfile(ufw_sk *, const char *pathname);
