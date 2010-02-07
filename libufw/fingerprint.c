@@ -30,7 +30,7 @@ i < 10000000 ? 7 : i < 100000000 ? 8 : i < 1000000000 ? 9 : 10);
 
 int gfw_fingerprint(const void *buf){
 	const struct iphdr *ip = buf;
-	int m1 = 0, m1a = 0, m2 = 0, m2a = 0;
+	int m1 = 1, m1a = 1, m2 = 1, m2a = 1;
 	int type;
 	unless(ntohs(ip->id) == 64)
 		m1=0, m1a=0;
