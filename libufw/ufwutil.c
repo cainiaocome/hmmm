@@ -520,7 +520,7 @@ static int ufw_send(ufw_sk *sk){
 		addr.sin_port = sk->proto;
 		addr.sin_addr.s_addr = sk->daddr;
 		r = sendto(sk->fd, sk->sendbuf, len, 0, (struct sockaddr *)&addr, sizeof(addr));
-	}while(r == EAGAIN);
+	}while(r < 0 && errno == EAGAIN);
 
 	gettimeofday(&time, NULL);
 
