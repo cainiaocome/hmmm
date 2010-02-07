@@ -294,17 +294,30 @@ int ufw_set_dport(ufw_sk *sk, u_int16_t port){
 	return 0;
 }
 
-int ufw_set_source(ufw_sk *sk, u_int32_t saddr, u_int16_t sport){
+int ufw_set_source(ufw_sk *sk, u_int32_t addr, u_int16_t port){
 	if(!sk){
 		errno = EBADF;
 		return -1;
 	}
 
-	if(saddr)
-		sk->saddr = htonl(saddr);
-	sk->sport = htons(sport);
+	if(addr)
+		sk->saddr = htonl(addr);
+	sk->sport = htons(port);
 	return 0;
 }
+
+int ufw_set_dest(ufw_sk *sk, u_int32_t addr, u_int16_t port){
+	if(!sk){
+		errno = EBADF;
+		return -1;
+	}
+
+	if(addr)
+		sk->daddr = htonl(addr);
+	sk->dport = htons(port);
+	return 0;
+}
+
 
 int ufw_set_window(ufw_sk *sk, u_int16_t window){
 	if(!sk){
