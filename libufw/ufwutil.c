@@ -378,8 +378,8 @@ static inline int build_tcp(ufw_sk *sk, u_int8_t flags, u_int32_t seq, u_int32_t
 	struct tcphdr *tcp;
 	int hlen;
 
-	ip = (struct iphdr *)sk->buf;
-	tcp = (struct tcphdr *)(sk->buf + sizeof(struct iphdr));
+	ip = (struct iphdr *)sk->sendbuf;
+	tcp = (struct tcphdr *)(sk->sendbuf + sizeof(struct iphdr));
 	if(!pls)pl = NULL;
 	if(pl == NULL)pls = 0;
 
@@ -406,12 +406,12 @@ static inline int build_tcp(ufw_sk *sk, u_int8_t flags, u_int32_t seq, u_int32_t
 	tcp->ack_seq = htonl(ack);
 	tcp->res1 = 0;
 	tcp->doff = sizeof(struct tcphdr) >> 2;
-	sk->buf[sizeof(struct iphdr) + 13] = flags;
+	sk->sendbuf[sizeof(struct iphdr) + 13] = flags;
 	tcp->window = sk->window;
 	tcp->urg_ptr = 0;
 	if(pl != NULL)
-		memcpy(sk->buf + hlen, pl, pls);
-	tcp->check = tcp_cksum(sk->buf, sizeof(struct tcphdr) + pls);
+		memcpy(sk->sendbuf + hlen, pl, pls);
+	tcp->check = tcp_cksum(sk->sendbuf, sizeof(struct tcphdr) + pls);
 
 	return hlen + pls;
 }
@@ -420,7 +420,7 @@ static inline int build_udp(ufw_sk *sk, const void *pl, int pls){
 	struct udphdr *udp;
 	int hlen;
 
-	udp = (struct udphdr *)(sk->buf + pls);
+	udp = (struct udphdr *)(sk->sendbuf + pls);
 	if(!pls)pl = NULL;
 	if(pl == NULL)pls = 0;
 
@@ -435,8 +435,8 @@ static inline int build_udp(ufw_sk *sk, const void *pl, int pls){
 	udp->dest = sk->dport;
 	udp->len = htons(hlen + pls);
 	if(pl != NULL)
-		memcpy(sk->buf + hlen, pl, pls);
-	udp->check = udp_cksum(sk->buf, hlen + pls);
+		memcpy(sk->sendbuf + hlen, pl, pls);
+	udp->check = udp_cksum(sk->sendbuf, hlen + pls);
 
 	return hlen + pls;
 }
@@ -494,7 +494,7 @@ static int ufw_send(ufw_sk *sk){
 		return -1;
 	}
 
-	ip = (struct iphdr *)sk->buf;
+	ip = (struct iphdr *)sk->sendbuf;
 	len = ntohs(ip->tot_len);
 	delay = 0;
 
@@ -502,7 +502,7 @@ static int ufw_send(ufw_sk *sk){
 		delay = (double)len/sk->limit_byte;
 	if(sk->limit_packet > 0 
 	&& (ip->protocol == IPPROTO_UDP 
-		|| (sk->limit_packet_flags & sk->buf[(ip->ihl << 2) + 13]))
+		|| (sk->limit_packet_flags & sk->sendbuf[(ip->ihl << 2) + 13]))
 	&& 1./sk->limit_packet > delay)
 		delay = 1./sk->limit_packet;
 
@@ -515,10 +515,12 @@ static int ufw_send(ufw_sk *sk){
 	gettimeofday(&last, NULL);
 
 
-	addr.sin_family = AF_INET;
-	addr.sin_port = sk->proto;
-	addr.sin_addr.s_addr = sk->daddr;
-	r = sendto(sk->fd, sk->buf, len, 0, (struct sockaddr *)&addr, sizeof(addr));
+	do{
+		addr.sin_family = AF_INET;
+		addr.sin_port = sk->proto;
+		addr.sin_addr.s_addr = sk->daddr;
+		r = sendto(sk->fd, sk->sendbuf, len, 0, (struct sockaddr *)&addr, sizeof(addr));
+	}while(r == EAGAIN);
 
 	gettimeofday(&time, NULL);
 
@@ -531,19 +533,19 @@ static int ufw_send(ufw_sk *sk){
 
 	for(cur = sk->sendhook; cur; cur = cur->next){
 		hki = cur->data;
-		if(!hki->func(sk->buf, &time, 1, hki->user))
+		if(!hki->func(sk->sendbuf, &time, 1, hki->user))
 			return r;
 	}
 
 	if((sk->opts & DUMP_SEND) && sk->dump)
-		dump_write(sk->dump, sk->buf, 0, &time);
+		dump_write(sk->dump, sk->sendbuf, 0, &time);
 
 	time.tv_sec -= sk->first_packet.tv_sec;
 	time.tv_usec -= sk->first_packet.tv_usec;
 	if(time.tv_usec < 0)time.tv_usec += 1000000;
 
 	if(sk->opts & PRINT_SEND)
-		print_packet(sk->buf, &time, 1);
+		print_packet(sk->sendbuf, &time, 1);
 
 	return r;
 }
@@ -566,9 +568,9 @@ static inline int ufw_recv(ufw_sk *sk){
 		return -1;
 	}
 
-	iov.iov_base = sk->buf;
-	iov.iov_len = sizeof(sk->buf);
-	ip = (struct iphdr *)sk->buf;
+	iov.iov_base = sk->recvbuf;
+	iov.iov_len = sizeof(sk->recvbuf);
+	ip = (struct iphdr *)sk->recvbuf;
 
 	for(;;){
 	next:
@@ -588,10 +590,10 @@ static inline int ufw_recv(ufw_sk *sk){
 		if((sk->opts & FILTER_DADDR) && ip->saddr != sk->daddr)
 			continue;
 		if((sk->opts & FILTER_SPORT) 
-			&& *(u_int16_t *)(sk->buf + (ip->ihl << 2) + 2) != sk->sport)
+			&& *(u_int16_t *)(sk->recvbuf + (ip->ihl << 2) + 2) != sk->sport)
 			continue;
 		if((sk->opts & FILTER_DPORT) 
-			&& *(u_int16_t *)(sk->buf + (ip->ihl << 2)) != sk->dport)
+			&& *(u_int16_t *)(sk->recvbuf + (ip->ihl << 2)) != sk->dport)
 			continue;
 
 		sk->received = 1;
@@ -610,19 +612,19 @@ static inline int ufw_recv(ufw_sk *sk){
 
 		for(cur = sk->recvhook; cur; cur = cur->next){
 			hki = cur->data;
-			if(!hki->func(sk->buf, &time, 1, hki->user))
+			if(!hki->func(sk->recvbuf, &time, 1, hki->user))
 				goto next;
 		}
 
 		if((sk->opts & DUMP_RECV) && sk->dump)
-			dump_write(sk->dump, sk->buf, 0, &time);
+			dump_write(sk->dump, sk->recvbuf, 0, &time);
 
 		time.tv_sec -= sk->first_packet.tv_sec;
 		time.tv_usec -= sk->first_packet.tv_usec;
 		if(time.tv_usec < 0)time.tv_usec += 1000000;
 
 		if(sk->opts & PRINT_RECV)
-			print_packet(sk->buf, &time, 0);
+			print_packet(sk->recvbuf, &time, 0);
 	}
 
 	return -1;//never
@@ -718,5 +720,9 @@ int ufw_sleep(ufw_sk *sk, unsigned int seconds){
 }
 
 int ufw_bindtodev(ufw_sk *sk, const char *name){
-	return setsockopt(sk->fd, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name));
+	if(setsockopt(sk->fd, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name)) < 0){
+		if(sk->opts & FATAL)die("setsocktop");
+		return -1;
+	}
+	return 0;
 }

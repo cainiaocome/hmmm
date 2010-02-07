@@ -37,6 +37,7 @@
 #define URG	0x20
 #define ECE	0x40
 #define CWR	0x80
+#define ALL 0xff
 
 #define	IP_RF 0x8000
 #define	IP_DF 0x4000
@@ -60,7 +61,8 @@ typedef struct _ufw_sk {
 	u_int16_t sport;
 	u_int16_t dport;
 	u_int16_t window;
-	u_int8_t buf[IP_MAXPACKET];
+	u_int8_t recvbuf[IP_MAXPACKET];
+	u_int8_t sendbuf[IP_MAXPACKET];
 	struct timeval first_packet;
 	size_t limit_packet;
 	u_int8_t limit_packet_flags;
