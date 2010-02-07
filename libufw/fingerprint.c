@@ -26,119 +26,93 @@ i < 10000000 ? 7 : i < 100000000 ? 8 : i < 1000000000 ? 9 : 10);
 		*--s=(char)('0'+i);
 	return len;
 }
+#define unless(exp) if(!(exp))
 
 int gfw_fingerprint(const void *buf){
 	const struct iphdr *ip = buf;
 	int m1 = 0, m1a = 0, m2 = 0, m2a = 0;
-	if(ntohs(ip->id) == 64)
-		m1++, m1a++;
-	if(ntohs(ip->frag_off) & IP_DF)
-		m2++, m2a++;
+	int type;
+	unless(ntohs(ip->id) == 64)
+		m1=0, m1a=0;
+	unless(ntohs(ip->frag_off) & IP_DF)
+		m2=0, m2a=0;
 	else
-		m1++, m1a++;
+		m1=0, m1a=0;
 	if(ip->protocol == IPPROTO_TCP){
 		const struct tcphdr *tcp = buf + (ip->ihl << 2);
-		if((tcp->doff << 2) - sizeof(struct tcphdr) == 0)
-			m1++, m1a++, m2++, m2a++;
-		if(tcp->rst && !tcp->ack)
-			m1++, m1a++;
-		if(tcp->rst && tcp->ack)
-			m2++, m2a++;
-		if(tcp->syn && tcp->ack)
-			m2++, m2a++;
-		if(ntohs(tcp->window) % 17 == 0)
-			m1++;
-		if(ntohs(ip->id) == (u_int16_t)(-1 - ntohs(tcp->window)*13))
-			m2++;
-		if((ntohs(tcp->window) - ntohs(tcp->source)/2) % 9 == 0)
-			m1a++;
-		if(ntohs(ip->id) + ntohs(tcp->window) * 79 == 62753)
-			m2a++;
+		unless((tcp->doff << 2) - sizeof(struct tcphdr) == 0)
+			m1=0, m1a=0, m2=0, m2a=0;
+		unless(tcp->rst && !tcp->ack)
+			m1=0, m1a=0;
+		unless((tcp->rst || tcp->syn) && tcp->ack)
+			m2=0, m2a=0;
+		unless(ntohs(tcp->window) % 17 == 0)
+			m1=0;
+		unless(ntohs(ip->id) == (u_int16_t)(-1 - ntohs(tcp->window) * 13))
+			m2=0;
+		unless((ntohs(tcp->window) - ntohs(tcp->source)/2) % 9 == 0)
+			m1a=0;
+		unless(ntohs(ip->id) + ntohs(tcp->window) * 79 == 62753)
+			m2a=0;
 	}
-	//m1: 5
-	//m1a: 5
-	//m2: 4
-	//m2a: 4
-	if(m1 >= 3 && m1 >= m1a)
-		return GFW_TYPE1;
-	if(m1a >= 3 && m1a >= m1)
-		return GFW_TYPE1A;
-	if(m2 >= 2 && m2 >= m2a)
-		return GFW_TYPE2;
-	if(m2a >= 2 && m2a >= m2)
-		return GFW_TYPE2A;
-	return 0;
+	if(m1)
+		type = GFW_TYPE1;
+	else if(m1a)
+		type = GFW_TYPE1A;
+	else if(m2)
+		type = GFW_TYPE2;
+	else if(m2a)
+		type = GFW_TYPE2A;
+	else
+		type = 0;
+	return type;
 }
 
 int gfw_fingerprint_sprint(char *s, const void *buf){
 	const struct iphdr *ip = buf;
 	char *t = s;
-	int m1 = 0, m1a = 0, m2 = 0, m2a = 0;
-	int type;
+	int m1 = 1, m1a = 1, m2 = 1, m2a = 1;
 	u_int8_t hop1 = 0, hop2 = 0;
-	if(ntohs(ip->id) == 64)
-		m1++, m1a++;
-	if(ntohs(ip->frag_off) & IP_DF)
-		m2++, m2a++;
+	unless(ntohs(ip->id) == 64)
+		m1=0, m1a=0;
+	unless(ntohs(ip->frag_off) & IP_DF)
+		m2=0, m2a=0;
 	else
-		m1++, m1a++;
+		m1=0, m1a=0;
 	if(ip->protocol == IPPROTO_TCP){
 		const struct tcphdr *tcp = buf + (ip->ihl << 2);
-		if((tcp->doff << 2) - sizeof(struct tcphdr) == 0)
-			m1++, m1a++, m2++, m2a++;
-		if(tcp->rst && !tcp->ack)
-			m1++, m1a++;
-		if(tcp->rst && tcp->ack)
-			m2++, m2a++;
-		if(tcp->syn && tcp->ack)
-			m2++, m2a++;
-		if(ntohs(tcp->window) % 17 == 0)
-			m1++;
-		if(ntohs(ip->id) == (u_int16_t)(-1 - ntohs(tcp->window) * 13))
-			m2++;
-		if((ntohs(tcp->window) - ntohs(tcp->source)/2) % 9 == 0)
-			m1a++;
-		if(ntohs(ip->id) + ntohs(tcp->window) * 79 == 62753)
-			m2a++;
+		unless((tcp->doff << 2) - sizeof(struct tcphdr) == 0)
+			m1=0, m1a=0, m2=0, m2a=0;
+		unless(tcp->rst && !tcp->ack)
+			m1=0, m1a=0;
+		unless((tcp->rst || tcp->syn) && tcp->ack)
+			m2=0, m2a=0;
+		unless(ntohs(tcp->window) % 17 == 0)
+			m1=0;
+		unless(ntohs(ip->id) == (u_int16_t)(-1 - ntohs(tcp->window) * 13))
+			m2=0;
+		unless((ntohs(tcp->window) - ntohs(tcp->source)/2) % 9 == 0)
+			m1a=0;
+		unless(ntohs(ip->id) + ntohs(tcp->window) * 79 == 62753)
+			m2a=0;
 		hop1 = 64 - ip->ttl;
 		hop2 = 48 - (ip->ttl - ntohs(tcp->window)%64);
 	}
-	if(m1 >= 3 && m1 >= m1a)
-		type = GFW_TYPE1;
-	else if(m1a >= 3 && m1a >= m1)
-		type = GFW_TYPE1A;
-	else if(m2 >= 2 && m2 >= m2a)
-		type = GFW_TYPE2;
-	else if(m2a >= 2 && m2a >= m2)
-		type = GFW_TYPE2A;
-	else
-		type = 0;
-	if(type == GFW_TYPE1){
-		//1,?/ 5,ho p:??
-		t += intcpy(t, "1,?/");
-		itoa(t-2, m1);
-		t += intcpy(t, "5,ho");
+	if(m1){
+		t += intcpy(t, "1,ho");
 		t += (intcpy(t, "p:??"), 2);
 		t += itoa(t, hop1);
-	}else if(type == GFW_TYPE1A){
-		//1a,? /5,h op:?
-		t += intcpy(t, "1a,?");
-		itoa(t-1, m1a);
-		t += intcpy(t, "/5,h");
+	}else if(m1a){
+		t += intcpy(t, "1a,h");
 		t += (intcpy(t, "op:?"), 3);
 		t += itoa(t, hop1);
-	}else if(type == GFW_TYPE2){
-		//2,?/4
-		t += intcpy(t, "2,?/");
-		itoa(t-2, m2);
-		t += intcpy(t, "4,ho");
+	}else if(m2){
+		t += intcpy(t, "2,ho");
 		t += (intcpy(t, "p:??"), 2);
 		t += itoa(t, hop2);
-	}else if(type == GFW_TYPE2A){
+	}else if(m2a){
 		//t:2a ,m:4 /4,ttl:
-		t += intcpy(t, "2a,?");
-		itoa(t-1, m2a);
-		t += intcpy(t, "/4,h");
+		t += intcpy(t, "2a,h");
 		t += (intcpy(t, "op:?"), 3);
 		t += itoa(t, hop2);
 	}
