@@ -38,10 +38,10 @@
 #define ECE	0x40
 #define CWR	0x80
 
-#define	IP_RF 0x8000			/* reserved fragment flag */
-#define	IP_DF 0x4000			/* dont fragment flag */
-#define	IP_MF 0x2000			/* more fragments flag */
-#define	IP_OFFMASK 0x1fff		/* mask for fragmenting bits */
+#define	IP_RF 0x8000
+#define	IP_DF 0x4000
+#define	IP_MF 0x2000
+#define	IP_OFFMASK 0x1fff
 #define IP_MAXPACKET 65535
 
 #define TCP 6

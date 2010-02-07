@@ -159,7 +159,7 @@ int packet_sprint_short_fast(char *s, const void *buf,
 				t += intcpy(t, " cke");
 				t += intcpy(t, "rr=1");
 			}
-			if(gfw_fingerprint(ip)){
+			if(!dir && gfw_fingerprint(ip)){
 				*t++ = ' '; 
 				t += intcpy(t, "gfw=");
 				t += gfw_fingerprint_sprint(t, ip);
@@ -198,7 +198,7 @@ int packet_sprint_short_fast(char *s, const void *buf,
 				t += intcpy(t, " cke");
 				t += intcpy(t, "rr=1");
 			}
-			if(gfw_fingerprint(ip)){
+			if(!dir && gfw_fingerprint(ip)){
 				*t++ = ' '; 
 				t += intcpy(t, "gfw=");
 				t += gfw_fingerprint_sprint(t, ip);
